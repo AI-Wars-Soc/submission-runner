@@ -1,3 +1,4 @@
+# Dockerfile for sandbox in which python 3 code is run
 FROM pypy:3
 
 WORKDIR /usr/src/app
