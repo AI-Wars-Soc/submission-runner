@@ -6,7 +6,7 @@ A sandboxed python executer for user's submissions
 
 ## Environment variables
  - `SANDBOX_PYPY_HEAPSIZE` and `SANDBOX_PYPY_TIMEOUT` give the parameters given to each PyPy instance
-
+ - `SANDBOX_API_DEBUG` enables debug mode in Flask
 
 ## Running sandbox
 The sandbox will attempt to run '`/exec/main.py`'. Any OS calls are put into stdout, 
