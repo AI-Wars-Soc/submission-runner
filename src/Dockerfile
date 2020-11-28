@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ .
 
-CMD [ "pypy", "-O2", "main.py" ]
+CMD [ "pypy", "main.py" ]
