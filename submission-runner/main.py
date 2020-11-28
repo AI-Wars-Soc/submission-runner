@@ -1,6 +1,7 @@
 import flask
 import os
 import sandbox
+import json
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
@@ -8,7 +9,7 @@ app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
 
 @app.route('/', methods=['GET'])
 def home():
-    return "<h1>Distant Reading Archive</h1><p>This site is a prototype API for distant reading of science fiction novels.</p>"
+    return json.dumps(sandbox.run_folder_in_sandbox("./test"))
 
 
 app.run(host='0.0.0.0')
