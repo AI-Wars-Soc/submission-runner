@@ -29,21 +29,22 @@ def run_folder_in_sandbox(path_str):
     path_str = str(path.resolve())
 
     # Try to get the docker image
-    try:
+    """try:
         with open('./sandbox/Dockerfile', 'r') as f:
             image, logs = _client.images.build('./sandbox', f)
     except (docker.errors.BuildError, docker.errors.APIError) as e:
-        return _build_status(code=501, response="Error while getting sandbox docker image: " + e)
+        return _build_status(code=501, response="Error while getting sandbox docker image: " + e)"""
 
     # Try to spin up a new container for the code to run in
+    print("Creating new container for path " + path_str)
     container = None
     logs = ""
     try:
-        container = _client.containers.run(image.id,
+        container = _client.containers.run("aiwarssoc/sandbox",
                                            detach=True,
-                                           cpu_rt_runtime=os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS'),
+                                           cpu_rt_runtime=int(os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS')),
                                            mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
-                                           nano_cpus=os.getenv('SANDBOX_NANO_CPUS'),
+                                           nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
                                            tty=True,
                                            network_disabled=True,
                                            network_mode='none',
@@ -52,14 +53,17 @@ def run_folder_in_sandbox(path_str):
                                            auto_remove=True,
                                            volumes={path_str: {'bind': '/exec', 'mode': 'ro'}})
         container.start()
-        container.wait(timeout=os.getenv('SANDBOX_API_TIMEOUT'))
+        print("Started container for path " + path_str)
+        container.wait(timeout=int(os.getenv('SANDBOX_API_TIMEOUT')))
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
-        return _build_status(code=502, response="Error while starting running container: " + e, output=logs)
+        return _build_status(code=502, response="Error while starting running container: " + str(e), output=logs)
     except requests.exceptions.ReadTimeout:
         return _build_status(code=503, response="Running container timed out", output=logs)
     finally:
         if container is not None:
             logs = container.logs()
             container.remove(force=True)
+        print("Finished with container for path " + path_str)
 
+    print("Success on run for path " + path_str)
     return _build_status(code=200, response="Success!", output=logs)
