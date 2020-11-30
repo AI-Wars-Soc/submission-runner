@@ -5,7 +5,7 @@ A sandboxed python executer for user's submissions
 # Documentation
 
 ## Environment variables
- - `SANDBOX_PYPY_HEAPSIZE` and `SANDBOX_PYPY_TIMEOUT` give the parameters given to each PyPy instance
+ - `SANDBOX_PYTHON_TIMEOUT` gives the total time that python is allowed to execute for. Eg. '10s'
  - `SANDBOX_API_DEBUG` enables debug mode in Flask
  - `SANDBOX_API_TIMEOUT` gives the overall timeout for containers managed by the sandbox api before they are killed
  - `SANDBOX_CPU_RT_RUNTIME_MICROSECONDS` gives the total amount of realtime CPU time a container can use per 

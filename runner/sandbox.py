@@ -8,7 +8,7 @@ _client = docker.from_env()
 
 
 def _build_status(code=200, response="", output=""):
-    return {"status": code, "response": response, "output": output}
+    return {"status": int(code), "response": str(response), "output": str(output)}
 
 
 def run_folder_in_sandbox(path_str):
@@ -28,13 +28,6 @@ def run_folder_in_sandbox(path_str):
         return _build_status(code=400, response="Invalid or non-existent directory: " + path_str)
     path_str = str(path.resolve())
 
-    # Try to get the docker image
-    """try:
-        with open('./sandbox/Dockerfile', 'r') as f:
-            image, logs = _client.images.build('./sandbox', f)
-    except (docker.errors.BuildError, docker.errors.APIError) as e:
-        return _build_status(code=501, response="Error while getting sandbox docker image: " + e)"""
-
     # Try to spin up a new container for the code to run in
     print("Creating new container for path " + path_str)
     container = None
@@ -42,16 +35,18 @@ def run_folder_in_sandbox(path_str):
     try:
         container = _client.containers.run("aiwarssoc/sandbox",
                                            detach=True,
-                                           cpu_rt_runtime=int(os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS')),
-                                           mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
-                                           nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
-                                           tty=True,
-                                           network_disabled=True,
+                                           #cpu_rt_runtime=int(os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS')),
+                                           #mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
+                                           #nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
+                                           #tty=True,
+                                           #network_disabled=True,
                                            network_mode='none',
-                                           read_only=True,  # marks all volumes as read only, just in case
-                                           remove=True,
-                                           auto_remove=True,
-                                           volumes={path_str: {'bind': '/exec', 'mode': 'ro'}})
+                                           #read_only=True,  # marks all volumes as read only, just in case
+                                           #remove=True,
+                                           #auto_remove=True,
+                                           environment={"SANDBOX_PYTHON_TIMEOUT": os.getenv('SANDBOX_PYTHON_TIMEOUT')},
+                                           volumes={path_str: {'bind': '/exec', 'mode': 'ro'}}
+                                           )
         container.start()
         print("Started container for path " + path_str)
         container.wait(timeout=int(os.getenv('SANDBOX_API_TIMEOUT')))
