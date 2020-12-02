@@ -1,0 +1,23 @@
+version: "3.7"
+services:
+  submission-runner:
+    build: ./
+    image: aiwarsoc/submission-runner:debug
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "scripts:/exec"
+    ports:
+      - "5000:5000"
+    environment:
+      SANDBOX_PYTHON_TIMEOUT: 10s
+      SANDBOX_CONTAINER_TIMEOUT: 10s
+      SANDBOX_API_DEBUG: "True"
+      SANDBOX_API_TIMEOUT: 100
+      SANDBOX_CPU_RT_RUNTIME_MICROSECONDS: 100
+      SANDBOX_MEM_LIMIT: 100m
+      SANDBOX_NANO_CPUS: 1000
+      SANDBOX_SCRIPTS_VOLUME: "scripts"
+
+volumes:
+  scripts:
+    name: scripts
