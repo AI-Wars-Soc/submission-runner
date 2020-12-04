@@ -17,8 +17,8 @@ def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
             "aiwarssoc/sandbox",
             detach=True,
             #cpu_rt_runtime=int(os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS')),
-            #mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
-            #nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
+            mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
+            nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
             tty=True,
             #network_disabled=True,
             network_mode='none',
@@ -76,7 +76,7 @@ def run_folder_in_sandbox(script_name):
         return _build_status(code=503, response="Running container timed out", output=logs)
     finally:
         if container is not None:
-            logs = container.logs()
+            logs = container.logs().decode()
             container.remove(force=True)
         print("Finished with container for " + identifier)
 
