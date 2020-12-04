@@ -5,7 +5,7 @@ services:
     image: aiwarsoc/submission-runner:debug
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "scripts:/exec"
+      - "scripts:/sandbox-scripts"
     ports:
       - "5000:5000"
     environment:

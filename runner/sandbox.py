@@ -22,7 +22,7 @@ def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
             tty=True,
             #network_disabled=True,
             network_mode='none',
-            #read_only=True,  # marks all volumes as read only, just in case
+            read_only=True,  # marks all volumes as read only, just in case
             #remove=True,
             #auto_remove=True,
             volumes={scripts_volume_name: {'bind': '/exec', 'mode': 'ro'}},
@@ -45,7 +45,7 @@ def run_folder_in_sandbox(script_name):
     """
     # Ensure that script is valid
     _script_name_rex = re.compile("^[a-zA-Z0-9]+\\.py$")
-    if script_name not in os.listdir("/exec") or _script_name_rex.match(script_name) is None:
+    if script_name not in os.listdir("/sandbox-scripts-src") or _script_name_rex.match(script_name) is None:
         return _build_status(code=401, response="Invalid script to run: " + script_name, output="")
 
     # Ensure volume is present

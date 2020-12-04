@@ -10,11 +10,11 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Add scripts
-VOLUME /exec
-COPY sandbox-scripts /exec
+VOLUME /sandbox-scripts
+COPY sandbox-scripts /sandbox-scripts-src
 COPY /runner /runner
 
 # Set up permissions for inside sandbox (uid 1429)
-RUN chown -R 1429 /exec
+RUN chown -R 1429 /sandbox-scripts-src
 
-CMD [ "python3", "/runner/main.py" ]
+CMD [ "/runner/run.sh" ]
