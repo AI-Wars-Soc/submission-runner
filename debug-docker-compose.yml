@@ -4,10 +4,10 @@ services:
     build: ./
     image: aiwarsoc/submission-runner:debug
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
       - "scripts:/exec"
     ports:
       - "5000:5000"
+    privileged: true
     environment:
       SANDBOX_PYTHON_TIMEOUT: 10s
       SANDBOX_CONTAINER_TIMEOUT: 10s
