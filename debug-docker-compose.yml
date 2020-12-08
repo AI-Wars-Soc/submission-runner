@@ -4,17 +4,17 @@ services:
     build: ./
     image: aiwarsoc/submission-runner:debug
     volumes:
-      - "scripts:/exec"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "scripts:/sandbox-scripts"
     ports:
       - "5000:5000"
-    privileged: true
     environment:
-      SANDBOX_PYTHON_TIMEOUT: 10s
-      SANDBOX_CONTAINER_TIMEOUT: 10s
+      SANDBOX_PYTHON_TIMEOUT: 100s
+      SANDBOX_CONTAINER_TIMEOUT: 120s
       SANDBOX_API_DEBUG: "True"
-      SANDBOX_API_TIMEOUT: 100
+      SANDBOX_API_TIMEOUT: 140
       SANDBOX_CPU_RT_RUNTIME_MICROSECONDS: 100
-      SANDBOX_MEM_LIMIT: 100m
+      SANDBOX_MEM_LIMIT: 256m
       SANDBOX_NANO_CPUS: 1000
       SANDBOX_SCRIPTS_VOLUME: "scripts"
 
