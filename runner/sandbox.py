@@ -16,15 +16,11 @@ def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
     return _client.containers.run(
             "aiwarssoc/sandbox",
             detach=True,
-            #cpu_rt_runtime=int(os.getenv('SANDBOX_CPU_RT_RUNTIME_MICROSECONDS')),
             mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
             nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
             tty=True,
-            #network_disabled=True,
             network_mode='none',
             read_only=True,  # marks all volumes as read only, just in case
-            #remove=True,
-            #auto_remove=True,
             volumes={scripts_volume_name: {'bind': '/exec', 'mode': 'ro'}},
             environment=env_vars,
             command=run_script_cmd

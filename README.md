@@ -9,7 +9,6 @@ A sandboxed python executer for user's submissions
  - `SANDBOX_CONTAINER_TIMEOUT` gives the total time that the container will live for independently, Eg. '20s'
  - `SANDBOX_API_DEBUG` enables debug mode in Flask
  - `SANDBOX_API_TIMEOUT` gives the overall timeout for containers managed by the sandbox api before they are killed
- - `SANDBOX_CPU_RT_RUNTIME_MICROSECONDS` gives the total amount of realtime CPU time a container can use per 
  - `SANDBOX_MEM_LIMIT` is per container, given in the form 100000b, 1000k, 128m, 1g, etc
  - `SANDBOX_NANO_CPUS` is the CPU quota in units of 1e-9 CPUs.
  - `SANDBOX_SCRIPTS_VOLUME` is the name of the volume containing the scripts that are able to be run to evaluate the submissions
