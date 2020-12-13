@@ -14,7 +14,12 @@ A sandboxed python executer for user's submissions
  - `SANDBOX_SCRIPTS_VOLUME` is the name of the volume containing the scripts that are able to be run to evaluate the submissions
 
 ## Running the REST api
-The REST API (also written in python) needs access to creating new sibling containers
+This container needs access to creating new sibling containers
 and so should either be run with `-v /var/run/docker.sock:/var/run/docker.sock` to let
 the containers be run as siblings, or with a dind sibling with `--privileged` if the containers should be
 run as children
+
+## Folder structure
+The folders `runner` and `shared` are both present on the runner container.
+The folders `sandbox-scripts` and `shared` are both present on the sandbox container.
+In both, the `shared` folder will appear inside the `runner` or `sandbox-scripts` folder.

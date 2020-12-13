@@ -12,7 +12,9 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Add scripts
 VOLUME /sandbox-scripts
 COPY sandbox-scripts /sandbox-scripts-src
+COPY shared /sandbox-scripts-src/shared
 COPY runner /runner
+COPY shared /runner/shared
 
 # Set up permissions for inside sandbox (uid 1429)
 RUN chown -R 1429 /sandbox-scripts-src

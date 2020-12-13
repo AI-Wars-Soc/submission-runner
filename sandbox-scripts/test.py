@@ -5,7 +5,7 @@ import socket
 import urllib.request
 import numpy as np
 from time import time
-import sandbox_send
+from shared.messages import Sender
 
 
 def connect(dom):
@@ -109,7 +109,8 @@ def numpy_speed_test():
     return np_results
 
 
-key = sandbox_send.gen_key()
+print("Start Print")
+sender = Sender()
 results = {"has_internet": connect('http://google.com'),
            "hostname_uses_loopback": hostname_uses_loopback(),
            "dirs": {path: {"readable": readable(path), "writable": writable(path)}
@@ -118,4 +119,6 @@ results = {"has_internet": connect('http://google.com'),
            "user": {"uid": os.getuid()},
            "process": {"cwd": os.getcwd(), "pid": os.getpid()},
            "numpy_benchmark": numpy_speed_test()}
-sandbox_send.deliver(key, json.dumps(results))
+print("Mid Print")
+sender.send_result(results)
+print("End Print")
