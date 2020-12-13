@@ -15,9 +15,7 @@ _client = docker.from_env()
 def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
     return _client.containers.run("aiwarssoc/sandbox",
                                   detach=True,
-                                  # stream=True,
-                                  # remove=True,
-                                  # auto_remove=True,
+                                  remove=True,
                                   mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
                                   nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
                                   tty=True,
