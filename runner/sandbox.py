@@ -43,7 +43,7 @@ def _get_lines(strings):
         yield "".join(line)
 
 
-def run_folder_in_sandbox(script_name) -> Iterator[Message]:
+def run_in_sandbox(script_name) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
     or an error while trying to run the sandbox.

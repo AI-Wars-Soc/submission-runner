@@ -19,6 +19,10 @@ class MessageType(Enum):
     ERROR_INVALID_ENTRY_FILE = "ERROR_INVALID_ENTRY_FILE"
     ERROR_INVALID_DOCKER_CONFIG = "ERROR_INVALID_DOCKER_CONFIG"
 
+    @staticmethod
+    def is_message_type(val: str):
+        return val in [mt.value for mt in MessageType]
+
 
 ERROR_TYPES = {MessageType.ERROR_PROCESS_KILLED,
                MessageType.ERROR_PROCESS_TIMEOUT,
@@ -41,17 +45,20 @@ class MessageInvalidTypeError(RuntimeError):
         RuntimeError.__init__(self, "Invalid type name: " + str(self.type_name))
 
 
-class Message:
+class Message(dict):
     def __init__(self, message_type: MessageType, data):
         self.message_type = message_type
         self.data = data
 
-    def to_string(self, key: dict) -> str:
         message = {
             "message_type": str(self.message_type.value),
-            "key": key,
             "data": self.data
         }
+        dict.__init__(self, message)
+
+    def to_string(self, key: dict) -> str:
+        message = dict(self)
+        message["key"] = key
         return json.dumps(message)
 
     def __str__(self):
@@ -74,7 +81,7 @@ class Message:
         except KeyError:
             raise MessageParseError("Invalid message dict: " + str(message))
 
-        if message_type not in [mt.value for mt in MessageType]:
+        if not MessageType.is_message_type(message_type):
             raise MessageInvalidTypeError(message_type)
 
         return key, Message(MessageType(message_type), data)
