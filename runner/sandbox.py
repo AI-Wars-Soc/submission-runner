@@ -1,7 +1,9 @@
 import docker
 import docker.errors
+import docker.types.daemon
 import os
 import re
+import concurrent.futures
 import requests
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
@@ -11,18 +13,36 @@ _client = docker.from_env()
 
 
 def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
-    return _client.containers.run(
-            "aiwarssoc/sandbox",
-            detach=True,
-            mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
-            nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
-            tty=True,
-            network_mode='none',
-            read_only=True,  # marks all volumes as read only, just in case
-            volumes={scripts_volume_name: {'bind': '/exec', 'mode': 'ro'}},
-            environment=env_vars,
-            command=run_script_cmd
-            )
+    return _client.containers.run("aiwarssoc/sandbox",
+                                  detach=True,
+                                  # stream=True,
+                                  # remove=True,
+                                  # auto_remove=True,
+                                  mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
+                                  nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
+                                  tty=True,
+                                  network_mode='none',
+                                  read_only=True,  # marks all volumes as read only, just in case
+                                  volumes={scripts_volume_name: {'bind': '/exec', 'mode': 'ro'}},
+                                  environment=env_vars,
+                                  command=run_script_cmd
+                                  )
+
+
+def _get_lines(strings):
+    line = []
+    for string in strings:
+        string = string.decode()
+        for char in string:
+            if char == "\r" or char == "\n":
+                if len(line) != 0:
+                    yield "".join(line)
+                line = []
+            else:
+                line.append(char)
+
+    if len(line) != 0:
+        yield "".join(line)
 
 
 def run_folder_in_sandbox(script_name) -> Iterator[Message]:
@@ -59,28 +79,43 @@ def run_folder_in_sandbox(script_name) -> Iterator[Message]:
     identifier = str({"script": script_name, "vars": env_vars})
 
     # Try to spin up a new container for the code to run in
-    container = None
     logging.info("Creating new container for " + identifier)
     try:
         run_script_cmd = "sh -c 'timeout $SANDBOX_PYTHON_TIMEOUT python3 /exec/{path}'".format(path=script_name)
         container = make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd)
         container.start()
-        container.wait(timeout=int(env_vars['SANDBOX_API_TIMEOUT']))
+        stream = container.attach(stdout=True, stderr=True, stream=True, logs=True)
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
         msg = "Error while running container: " + str(e)
         logging.error(msg)
         yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
         return
-    except requests.exceptions.ReadTimeout:
-        msg = "Running container timed out"
-        logging.info("Finished due to timeout for " + identifier)
-        yield Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
-        return
-    finally:
-        if container is not None:
-            logs = container.logs().decode()
-            receiver = Receiver(logs.split("\n"))
-            yield from receiver.messages
+
+    # Set an async timer for killing the sandbox if it takes too long
+    def async_kill():
+        try:
+            container.wait(timeout=int(env_vars['SANDBOX_API_TIMEOUT']))
+        except docker.errors.APIError as kill_e:
+            logging.error("Error while waiting for container: " + str(kill_e))
+            return Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
+        except requests.exceptions.ReadTimeout:
+            logging.error("Container Timeout")
+            stream.close()
             container.remove(force=True)
+            return Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        kill_future = executor.submit(async_kill)
+
+        # Process lines
+        lines = _get_lines(stream)
+        receiver = Receiver(lines)
+        yield from receiver.messages
+
+        # Check if there was a timeout
+        kill_result = kill_future.result()
+        if kill_result is not None:
+            yield kill_result
 
     logging.info("Finished sandbox for " + identifier)

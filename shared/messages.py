@@ -84,15 +84,15 @@ class Message:
         return Message(MessageType.RESULT, data)
 
     @staticmethod
-    def filter(messages: Iterator["Message"], types: Union[Set[MessageType], MessageType]) -> List["Message"]:
+    def filter(messages: Iterator["Message"], types: Union[Set[MessageType], MessageType]) -> Iterator["Message"]:
         if isinstance(types, MessageType):
             types = {types}
 
-        return list(filter(lambda m: m.message_type in types, messages))
+        return filter(lambda m: m.message_type in types, messages)
 
     @staticmethod
-    def get_datas(messages: Iterator["Message"]) -> list:
-        return list(map(lambda m: m.data, messages))
+    def get_datas(messages: Iterator["Message"]) -> Iterator:
+        return map(lambda m: m.data, messages)
 
 
 class Sender:
