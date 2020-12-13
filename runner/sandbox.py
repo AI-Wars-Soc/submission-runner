@@ -3,13 +3,11 @@ import docker.errors
 import os
 import re
 import requests
+from shared.messages import MessageType, Message, Receiver
+from typing import Iterator
 import logging
 
 _client = docker.from_env()
-
-
-def _build_status(code=200, response="", output=""):
-    return {"status": int(code), "response": str(response), "output": str(output)}
 
 
 def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
@@ -27,54 +25,62 @@ def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
             )
 
 
-def run_folder_in_sandbox(script_name):
-    """runs the given script in a sandbox and returns a result dict:
-    {
-        "status": ${status code},
-        "response": ${string response describing status code},
-        "output": ${the output of the program (for as far as it ran)}
-    }
-    where status code can be the following:
-    2XX => program ran properly to completion
-    4XX => malformed request, eg dir doesn't exist
-    5XX => program failed to run, eg timeout
+def run_folder_in_sandbox(script_name) -> Iterator[Message]:
+    """runs the given script in a sandbox and returns a result list.
+    Each item in the list is of type 'Message' and is either output from the sandbox
+    or an error while trying to run the sandbox.
     """
+    logging.info("Request for script " + script_name)
+
     # Ensure that script is valid
     _script_name_rex = re.compile("^[a-zA-Z0-9]+\\.py$")
     if script_name not in os.listdir("/sandbox-scripts-src") or _script_name_rex.match(script_name) is None:
-        return _build_status(code=401, response="Invalid script to run: " + script_name, output="")
+        logging.error("No such script " + script_name)
+        yield Message(MessageType.ERROR_INVALID_ENTRY_FILE, script_name)
+        return
 
     # Ensure volume is present
     scripts_volume_name = str(os.getenv('SANDBOX_SCRIPTS_VOLUME'))
     if scripts_volume_name not in [v.name for v in _client.volumes.list()]:
-        return _build_status(code=402, response="Scripts volume not present: " + scripts_volume_name, output="")
+        msg = "Scripts volume not present: " + scripts_volume_name
+        logging.error(msg)
+        yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
+        return
 
     # Get variables
     var_names = ['SANDBOX_PYTHON_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_API_TIMEOUT']
     env_vars = {name: str(os.getenv(name)) for name in var_names}
-    if None in env_vars.values():
-        return _build_status(code=403, response="Not all required environment variables are set", output="")
+    unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
+    if len(unset) != 0:
+        msg = "Not all required environment variables are set: " + str(unset)
+        logging.error(msg)
+        yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
 
     identifier = str({"script": script_name, "vars": env_vars})
 
     # Try to spin up a new container for the code to run in
-    print("Creating new container for " + identifier)
     container = None
-    logs = ""
+    logging.info("Creating new container for " + identifier)
     try:
         run_script_cmd = "sh -c 'timeout $SANDBOX_PYTHON_TIMEOUT python3 /exec/{path}'".format(path=script_name)
         container = make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd)
         container.start()
         container.wait(timeout=int(env_vars['SANDBOX_API_TIMEOUT']))
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
-        return _build_status(code=502, response="Error while starting running container: " + str(e), output=logs)
+        msg = "Error while running container: " + str(e)
+        logging.error(msg)
+        yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
+        return
     except requests.exceptions.ReadTimeout:
-        return _build_status(code=503, response="Running container timed out", output=logs)
+        msg = "Running container timed out"
+        logging.info("Finished due to timeout for " + identifier)
+        yield Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
+        return
     finally:
         if container is not None:
             logs = container.logs().decode()
+            receiver = Receiver(logs.split("\n"))
+            yield from receiver.messages
             container.remove(force=True)
-        print("Finished with container for " + identifier)
 
-    print("Success on run for " + identifier)
-    return _build_status(code=200, response="Success!", output=logs)
+    logging.info("Finished sandbox for " + identifier)

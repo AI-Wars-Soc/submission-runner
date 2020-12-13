@@ -2,7 +2,7 @@ import flask
 import os
 import json
 import sandbox
-from shared.messages import MessageType, Receiver
+from shared.messages import MessageType, Message
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
@@ -10,18 +10,15 @@ app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
 
 @app.route('/', methods=['GET'])
 def home():
-    ran = sandbox.run_folder_in_sandbox("test.py")
-    if ran["status"] == 200:
-        receiver = Receiver(ran["output"].split("\n"))
-        messages = receiver.messages
-        results = filter(lambda m: m.message_type == MessageType.RESULT, messages)
-        prints = filter(lambda m: m.message_type == MessageType.PRINT, messages)
+    messages = list(sandbox.run_folder_in_sandbox("test.py"))
 
-        for result in results:
-            print(result.data, flush=True)
+    results = Message.get_datas(Message.filter(messages, set(MessageType)))
+    prints = Message.get_datas(Message.filter(messages, set(MessageType)))
 
-        ran["output"] = [m.data for m in prints]
-    return json.dumps(ran)
+    for result in results:
+        print(result, flush=True)
+
+    return json.dumps(prints)
 
 
 app.run(host='0.0.0.0')

@@ -2,27 +2,31 @@ from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
-from typing import Tuple, List
+from typing import Tuple, Iterator, List, Set, Union
 import collections
 
 
 @unique
 class MessageType(Enum):
+    NEW_KEY = "NEW_KEY"
     RESULT = "RESULT"
     PRINT = "PRINT"
-    PROCESS_KILLED = "PROCESS_KILLED"
+    ERROR_PROCESS_KILLED = "ERROR_PROCESS_KILLED"
+    ERROR_PROCESS_TIMEOUT = "ERROR_PROCESS_TIMEOUT"
     ERROR_INVALID_NEW_KEY = "ERROR_INVALID_NEW_KEY"
-    NEW_KEY = "NEW_KEY"
     ERROR_INVALID_ATTACHED_KEY = "ERROR_INVALID_ATTACHED_KEY"
     ERROR_INVALID_MESSAGE_TYPE = "ERROR_INVALID_MESSAGE_TYPE"
+    ERROR_INVALID_ENTRY_FILE = "ERROR_INVALID_ENTRY_FILE"
+    ERROR_INVALID_DOCKER_CONFIG = "ERROR_INVALID_DOCKER_CONFIG"
 
 
-@unique
-class DataType(Enum):
-    STR = "STR"
-    DICT = "DICT"
-    INT = "INT"
-    FLOAT = "FLOAT"
+ERROR_TYPES = {MessageType.ERROR_PROCESS_KILLED,
+               MessageType.ERROR_PROCESS_TIMEOUT,
+               MessageType.ERROR_INVALID_NEW_KEY,
+               MessageType.ERROR_INVALID_ATTACHED_KEY,
+               MessageType.ERROR_INVALID_MESSAGE_TYPE,
+               MessageType.ERROR_INVALID_ENTRY_FILE,
+               MessageType.ERROR_INVALID_DOCKER_CONFIG}
 
 
 class MessageParseError(RuntimeError):
@@ -79,6 +83,17 @@ class Message:
     def new_result(data) -> "Message":
         return Message(MessageType.RESULT, data)
 
+    @staticmethod
+    def filter(messages: Iterator["Message"], types: Union[Set[MessageType], MessageType]) -> List["Message"]:
+        if isinstance(types, MessageType):
+            types = {types}
+
+        return list(filter(lambda m: m.message_type in types, messages))
+
+    @staticmethod
+    def get_datas(messages: Iterator["Message"]) -> list:
+        return list(map(lambda m: m.data, messages))
+
 
 class Sender:
     def __init__(self):
@@ -96,14 +111,13 @@ class Sender:
 
 
 class Receiver:
-    def __init__(self, lines: List[str]):
+    def __init__(self, lines: Iterator[str]):
         self.messages = Receiver._process(lines)
 
     @staticmethod
-    def _process(lines: List[str]) -> List["Message"]:
+    def _process(lines: Iterator[str]) -> Iterator["Message"]:
         key = None
 
-        messages = []
         for line in lines:
             line = str(line).strip()
             if line.isspace() or line == "":
@@ -115,10 +129,9 @@ class Receiver:
             if message.message_type == MessageType.NEW_KEY:
                 key = message.data
 
-            messages.append(message)
-        return messages
+            yield message
 
-    keyword_messages = {"Killed": Message(MessageType.PROCESS_KILLED, None)}
+    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, None)}
 
     @staticmethod
     def _process_line(key: dict, line: str) -> "Message":
