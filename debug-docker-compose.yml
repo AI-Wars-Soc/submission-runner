@@ -5,9 +5,18 @@ services:
     image: aiwarsoc/submission-runner:debug
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "scripts:/sandbox-scripts"
-      - "./runner:/runner"
-      - "./shared:/runner/shared"
+      - type: bind
+        source: "./runner"
+        target: "/exec/runner"
+        read_only: true
+      - type: bind
+        source: "./sandbox"
+        target: "/exec/sandbox"
+        read_only: true
+      - type: bind
+        source: "./shared"
+        target: "/exec/shared"
+        read_only: true
     ports:
       - "5000:5000"
     environment:
@@ -16,8 +25,3 @@ services:
       SANDBOX_API_DEBUG: "True"
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_NANO_CPUS: 1000
-      SANDBOX_SCRIPTS_VOLUME: "scripts"
-
-volumes:
-  scripts:
-    name: scripts

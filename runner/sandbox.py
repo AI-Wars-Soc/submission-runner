@@ -1,3 +1,6 @@
+import io
+import tarfile
+
 import docker
 import docker.errors
 import docker.types.daemon
@@ -12,7 +15,7 @@ import logging
 _client = docker.from_env()
 
 
-def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
+def make_sandbox_container(env_vars, run_script_cmd):
     return _client.containers.run("aiwarssoc/sandbox",
                                   detach=True,
                                   # remove=True,
@@ -21,7 +24,6 @@ def make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd):
                                   tty=True,
                                   network_mode='none',
                                   read_only=True,  # marks all volumes as read only, just in case
-                                  volumes={scripts_volume_name: {'bind': '/exec', 'mode': 'ro'}},
                                   environment=env_vars,
                                   command=run_script_cmd
                                   )
@@ -47,6 +49,47 @@ def _get_logs(container):
     return str(container.logs(timestamps=True))
 
 
+def _async_kill(container, timeout: int, identifier: str):
+    try:
+        container.wait(timeout=timeout)
+    except docker.errors.APIError as kill_e:
+        msg = "Error while waiting for container " + identifier + ": " + str(kill_e)
+        logging.error(msg)
+        return Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
+    except requests.exceptions.ReadTimeout:
+        msg = "Container Timeout: " + identifier
+        logging.error(msg)
+        container.remove(force=True)
+        return Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
+    return None
+
+
+def _make_command(script_name: str):
+    return """sh -c 
+            '
+                PYTHONPATH=PYTHONPATH:/exec ;
+                if timeout $SANDBOX_PYTHON_TIMEOUT python3 /exec/sandbox/{path} || true ;
+                then
+                    echo "Done" ;
+                else
+                    echo "Timeout" ;
+                fi ;
+            '
+            """.format(path=script_name)
+
+
+def _copy_sandbox_files(container):
+    # Compress files to tar
+    fh = io.BytesIO()
+    with tarfile.open(fileobj=fh, mode='w:gz') as tar:
+        tar.add("/exec/sandbox", arcname="sandbox")
+        tar.add("/exec/shared", arcname="shared")
+
+    # Send
+    container.put_archive("/exec/", fh.read())
+    fh.close()
+
+
 def run_in_sandbox(script_name) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
@@ -56,17 +99,9 @@ def run_in_sandbox(script_name) -> Iterator[Message]:
 
     # Ensure that script is valid
     script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-    if (not os.path.exists("/sandbox-src/" + script_name)) or script_name_rex.match(script_name) is None:
+    if (not os.path.exists("/exec/sandbox/" + script_name)) or script_name_rex.match(script_name) is None:
         logging.error("No such script " + script_name)
         yield Message(MessageType.ERROR_INVALID_ENTRY_FILE, script_name)
-        return
-
-    # Ensure volume is present
-    scripts_volume_name = str(os.getenv('SANDBOX_SCRIPTS_VOLUME'))
-    if scripts_volume_name not in [v.name for v in _client.volumes.list()]:
-        msg = "Scripts volume not present: " + scripts_volume_name
-        logging.error(msg)
-        yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
         return
 
     # Get variables
@@ -85,17 +120,9 @@ def run_in_sandbox(script_name) -> Iterator[Message]:
     container = None
     logs = ""
     try:
-        run_script_cmd = """sh -c 
-            '
-                if timeout $SANDBOX_PYTHON_TIMEOUT python3 /exec/sandbox/{path} || true ;
-                then
-                    echo "Done" ;
-                else
-                    echo "Timeout" ;
-                fi ;
-            '
-            """.format(path=script_name)
-        container = make_sandbox_container(scripts_volume_name, env_vars, run_script_cmd)
+        run_script_cmd = _make_command(script_name)
+        container = make_sandbox_container(env_vars, run_script_cmd)
+        _copy_sandbox_files(container)
         container.start()
         stream = container.attach(stdout=True, stderr=True, stream=True, logs=True)
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
@@ -106,22 +133,9 @@ def run_in_sandbox(script_name) -> Iterator[Message]:
         yield Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
         return
 
-    # Set an async timer for killing the sandbox if it takes too long
-    def async_kill():
-        try:
-            container.wait(timeout=int(env_vars['SANDBOX_CONTAINER_TIMEOUT']))
-        except docker.errors.APIError as kill_e:
-            logging.error("Error while waiting for container " + identifier + ": " + str(kill_e))
-            return Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
-        except requests.exceptions.ReadTimeout:
-            logging.error("Container Timeout: " + identifier)
-            stream.close()
-            container.remove(force=True)
-            return Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
-        return None
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        kill_future = executor.submit(async_kill)
+        # Set an async timer for killing the sandbox if it takes too long
+        kill_future = executor.submit(_async_kill, (container, int(env_vars['SANDBOX_CONTAINER_TIMEOUT']), identifier))
 
         # Process lines
         lines = _get_lines(stream)
