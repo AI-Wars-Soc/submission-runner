@@ -18,8 +18,6 @@ def home():
         return Response(str({"error": "File contains invalid characters"}), status=400, mimetype='application/json')
     file += ".py"
 
-    print(file, flush=True)
-
     types_str = request.args.get("filter", "any")
     types_rex = re.compile("^[a-zA-Z_,]+$")
     if types_rex.match(types_str) is None:

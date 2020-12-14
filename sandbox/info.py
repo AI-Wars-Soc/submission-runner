@@ -56,7 +56,7 @@ def numpy_speed_test():
     # Let's take the randomness out of random numbers (for reproducibility)
     np.random.seed(0)
 
-    size = 2048
+    size = 1024
     A, B = np.random.random((size, size)), np.random.random((size, size))
     C, D = np.random.random((size * 128,)), np.random.random((size * 128,))
     E = np.random.random((int(size / 2), int(size / 4)))

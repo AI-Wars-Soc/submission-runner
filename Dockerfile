@@ -10,6 +10,7 @@ COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Add scripts
+VOLUME ["/tmp/sandbox"]
 COPY runner /exec/runner
 COPY sandbox /exec/sandbox
 COPY shared /exec/shared

@@ -46,7 +46,7 @@ class MessageInvalidTypeError(RuntimeError):
 
 
 class Message(dict):
-    def __init__(self, message_type: MessageType, data):
+    def __init__(self, message_type: MessageType, data: dict):
         self.message_type = message_type
         self.data = data
 
@@ -126,6 +126,7 @@ class Receiver:
         key = None
 
         for line in lines:
+            print("Got Line", line, flush=True)
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue

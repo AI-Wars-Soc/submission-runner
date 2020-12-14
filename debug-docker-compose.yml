@@ -17,10 +17,12 @@ services:
         source: "./shared"
         target: "/exec/shared"
         read_only: true
+      - "./tmp:/tmp/sandbox"
     ports:
       - "5000:5000"
     environment:
       SANDBOX_PYTHON_TIMEOUT: 10s
+      SANDBOX_ENTRY_TIMEOUT: 10s
       SANDBOX_CONTAINER_TIMEOUT: 12
       SANDBOX_API_DEBUG: "True"
       SANDBOX_MEM_LIMIT: 256m
