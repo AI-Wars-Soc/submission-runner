@@ -6,13 +6,16 @@ import os
 import re
 import concurrent.futures
 import requests
-from docker.models.containers import Container, ExecResult
+from docker.models.containers import Container
 
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
 import logging
 
 _client = docker.from_env()
+
+
+_COMPRESSED_PATH = '/tmp/sandbox/compressed.tar'
 
 
 def make_sandbox_container(env_vars) -> Container:
@@ -65,19 +68,7 @@ def _async_kill(container, timeout: int, identifier: str):
 
 
 def _make_command(script_name: str):
-    return """sh -c 
-            '
-                if timeout $SANDBOX_PYTHON_TIMEOUT python3 /home/sandbox/sandbox/{path} || true ;
-                then
-                    echo "Done" ;
-                else
-                    echo "Timeout" ;
-                fi ;
-            '
-            """.format(path=script_name)
-
-
-_COMPRESSED_PATH = '/tmp/sandbox/compressed.tar'
+    return "./sandbox/run.sh '{path}'".format(path=script_name)
 
 
 def _compress_sandbox_files():
@@ -113,7 +104,7 @@ def _run_in_container(container: Container, script_name: str, env_vars: dict, id
                                              user='root',
                                              stream=True,
                                              environment=env_vars,
-                                             workdir="/home/sandbox/sandbox")
+                                             workdir="/home/sandbox/")
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         # Set an async timer for killing the sandbox if it takes too long

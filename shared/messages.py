@@ -126,7 +126,6 @@ class Receiver:
         key = None
 
         for line in lines:
-            print("Got Line", line, flush=True)
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue
@@ -139,7 +138,7 @@ class Receiver:
 
             yield message
 
-    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, None)}
+    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, {})}
 
     @staticmethod
     def _process_line(key: dict, line: str) -> "Message":
@@ -151,10 +150,10 @@ class Receiver:
         try:
             received_key, message = Message.from_string(line)
         except MessageInvalidTypeError as e:
-            return Message(MessageType.ERROR_INVALID_MESSAGE_TYPE, e.type_name)
+            return Message(MessageType.ERROR_INVALID_MESSAGE_TYPE, {"given": e.type_name})
         except MessageParseError:
             # No match => assume print statement
-            return Message(MessageType.PRINT, line)
+            return Message(MessageType.PRINT, {"str": line})
 
         # New key is a special case
         if message.message_type == MessageType.NEW_KEY:
