@@ -4,10 +4,13 @@ from flask import request, Response
 import os
 import json
 from shared.messages import MessageType, Message
-import sandbox
+from runner import sandbox
+import logging
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
+
+logging.basicConfig(level=logging.DEBUG if os.getenv('SANDBOX_API_DEBUG') else logging.WARNING)
 
 
 @app.route('/run', methods=['GET'])

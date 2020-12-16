@@ -4,10 +4,7 @@ import docker.errors
 import docker.types.daemon
 import os
 import re
-import concurrent.futures
-import requests
 from docker.models.containers import Container
-
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
 import logging
@@ -22,49 +19,15 @@ def make_sandbox_container(env_vars) -> Container:
     return _client.containers.run("aiwarssoc/sandbox",
                                   detach=True,
                                   remove=True,
-                                  mem_limit=os.getenv('SANDBOX_MEM_LIMIT'),
-                                  nano_cpus=int(os.getenv('SANDBOX_NANO_CPUS')),
+                                  mem_limit=env_vars['SANDBOX_MEM_LIMIT'],
+                                  nano_cpus=int(env_vars['SANDBOX_NANO_CPUS']),
                                   tty=True,
                                   network_mode='none',
                                   # read_only=True,  # marks all volumes as read only, just in case
                                   environment=env_vars,
-                                  command="sh -c 'sleep $SANDBOX_ENTRY_TIMEOUT'"
+                                  command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
+                                  user='sandbox'
                                   )
-
-
-def _get_lines(strings):
-    line = []
-    for string in strings:
-        if string is None or string == "":
-            continue
-        string = str(string.decode())
-        for char in string:
-            if char == "\r" or char == "\n":
-                if len(line) != 0:
-                    yield "".join(line)
-                line = []
-            else:
-                line.append(char)
-
-    if len(line) != 0:
-        yield "".join(line)
-
-
-def _async_kill(container, timeout: int, identifier: str):
-    try:
-        container.wait(timeout=timeout)
-    except docker.errors.APIError as kill_e:
-        msg = {"identifier": identifier, "error": str(kill_e), "logs": container.logs().decode()}
-        msg = Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
-        _error(msg)
-        return msg
-    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
-        msg = {"identifier": identifier, "logs": container.logs().decode()}
-        msg = Message(MessageType.ERROR_PROCESS_TIMEOUT, msg)
-        _error(msg)
-        container.remove(force=True)
-        return msg
-    return None
 
 
 def _make_command(script_name: str):
@@ -89,39 +52,47 @@ def _copy_sandbox_files(container: Container):
 
     # Fix ownership
     for subdir in ["sandbox", "shared"]:
-        print(container.exec_run(cmd="ls -a -l /home/sandbox/" + subdir, user='root').output.decode(), flush=True)
+        logging.debug(container.exec_run("chown -R sandbox:sandbox /home/sandbox/"+subdir, user='root').output.decode())
+        logging.debug(container.exec_run(cmd="ls -a -l /home/sandbox/" + subdir, user='root').output.decode())
 
 
 def _error(message: Message):
     logging.error("{}: {}".format(message.message_type.value, str(message.data)))
 
 
-def _run_in_container(container: Container, script_name: str, env_vars: dict, identifier: str):
+def _get_lines(strings):
+    line = []
+    for string in strings:
+        if string is None or string == "":
+            continue
+        string = str(string.decode())
+        for char in string:
+            if char == "\r" or char == "\n":
+                if len(line) != 0:
+                    yield "".join(line)
+                line = []
+            else:
+                line.append(char)
+
+    if len(line) != 0:
+        yield "".join(line)
+
+
+def _run_in_container(container: Container, script_name: str, env_vars: dict):
     container.start()
     _copy_sandbox_files(container)
     run_script_cmd = _make_command(script_name)
     (exit_code, stream) = container.exec_run(cmd=run_script_cmd,
-                                             user='root',
+                                             user='sandbox',
                                              stream=True,
                                              environment=env_vars,
                                              workdir="/home/sandbox/")
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Set an async timer for killing the sandbox if it takes too long
-        kill_future = executor.submit(_async_kill, container, int(env_vars['SANDBOX_CONTAINER_TIMEOUT']), identifier)
-
-        print("Started Timeout", flush=True)
-
-        # Process lines
-        lines = _get_lines(stream)
-        receiver = Receiver(lines)
-        yield from receiver.messages
-
-        # Check if there was a timeout
-        kill_result = kill_future.result()
-        if kill_result is not None:
-            print("Got Timeout True", flush=True)
-            yield kill_result
+    # Process lines
+    lines = _get_lines(stream)
+    receiver = Receiver(lines)
+    iterator = receiver.get_messages_iterator()
+    yield from iterator
 
 
 def run_in_sandbox(script_name: str) -> Iterator[Message]:
@@ -140,7 +111,8 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
         return
 
     # Get variables
-    var_names = ['SANDBOX_PYTHON_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_ENTRY_TIMEOUT']
+    var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_PARSER_TIMEOUT',
+                 'SANDBOX_MEM_LIMIT', 'SANDBOX_NANO_CPUS']
     env_vars = {name: str(os.getenv(name)) for name in var_names}
     identifier = str({"script": script_name, "vars": env_vars})
     unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
@@ -156,7 +128,7 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
     container = None
     try:
         container = make_sandbox_container(env_vars)
-        yield from _run_in_container(container, script_name, env_vars, identifier)
+        yield from _run_in_container(container, script_name, env_vars)
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
         msg = {"identifier": identifier, "error": str(e)}
         msg = Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
@@ -164,5 +136,7 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
         yield msg
         return
     finally:
+        print(container.status, flush=True)
+        if container is not None and container.status == "running":
+            container.kill()
         logging.info("Finished sandbox for " + identifier)
-

@@ -1,7 +1,10 @@
+import asyncio
+import threading
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
+from queue import Queue
 from typing import Tuple, Iterator, List, Set, Union
 import collections
 
@@ -11,6 +14,7 @@ class MessageType(Enum):
     NEW_KEY = "NEW_KEY"
     RESULT = "RESULT"
     PRINT = "PRINT"
+    END = "END"
     ERROR_PROCESS_KILLED = "ERROR_PROCESS_KILLED"
     ERROR_PROCESS_TIMEOUT = "ERROR_PROCESS_TIMEOUT"
     ERROR_INVALID_NEW_KEY = "ERROR_INVALID_NEW_KEY"
@@ -119,13 +123,13 @@ class Sender:
 
 class Receiver:
     def __init__(self, lines: Iterator[str]):
-        self.messages = Receiver._process(lines)
+        self._lines = lines
 
-    @staticmethod
-    def _process(lines: Iterator[str]) -> Iterator["Message"]:
+    def get_messages_iterator(self) -> Iterator[Message]:
+        # TODO: Add filter for valid final messages
         key = None
 
-        for line in lines:
+        for line in self._lines:
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue
@@ -138,7 +142,9 @@ class Receiver:
 
             yield message
 
-    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, {})}
+    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, {}),
+                        "Done": Message(MessageType.END, {}),
+                        "Timeout": Message(MessageType.ERROR_PROCESS_TIMEOUT, {})}
 
     @staticmethod
     def _process_line(key: dict, line: str) -> "Message":

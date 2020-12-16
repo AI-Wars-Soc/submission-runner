@@ -5,9 +5,10 @@ A sandboxed python executer for user's submissions
 # Documentation
 
 ## Environment variables
- - `SANDBOX_PYTHON_TIMEOUT` gives the total time that python is allowed to execute for. Eg. '10s'
- - `SANDBOX_CONTAINER_TIMEOUT` gives the overall timeout for containers managed by the sandbox api
-   before they are killed in seconds, eg '10'. Should be about the same as `SANDBOX_PYTHON_TIMEOUT`
+ - `SANDBOX_COMMAND_TIMEOUT` gives the total time that python is allowed to execute for. Eg. '10s'
+ - `SANDBOX_CONTAINER_TIMEOUT` gives the overall timeout for containers before they kill themselves. Eg. '12s'
+ - `SANDBOX_PARSER_TIMEOUT` gives the number of seconds that the parser will wait for the program to finish
+   outputting before it kills the container. Eg. '11'
  - `SANDBOX_API_DEBUG` enables debug mode in Flask
  - `SANDBOX_MEM_LIMIT` is per container, given in the form 100000b, 1000k, 128m, 1g, etc
  - `SANDBOX_NANO_CPUS` is the CPU quota in units of 1e-9 CPUs.
