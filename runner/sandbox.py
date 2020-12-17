@@ -128,7 +128,8 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
     container = None
     try:
         container = make_sandbox_container(env_vars)
-        yield from _run_in_container(container, script_name, env_vars)
+        messages = _run_in_container(container, script_name, env_vars)
+        yield from Message.filter_middle_ends_to_prints(messages)
     except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
         msg = {"identifier": identifier, "error": str(e)}
         msg = Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
@@ -137,6 +138,6 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
         return
     finally:
         print(container.status, flush=True)
-        if container is not None and container.status == "running":
+        if container is not None and container.status in {"running", "created", "restarting", "paused"}:
             container.kill()
         logging.info("Finished sandbox for " + identifier)

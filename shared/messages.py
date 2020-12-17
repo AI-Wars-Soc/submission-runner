@@ -1,4 +1,5 @@
 import asyncio
+import re
 import threading
 from enum import Enum, unique
 import json
@@ -28,15 +29,6 @@ class MessageType(Enum):
         return val in [mt.value for mt in MessageType]
 
 
-ERROR_TYPES = {MessageType.ERROR_PROCESS_KILLED,
-               MessageType.ERROR_PROCESS_TIMEOUT,
-               MessageType.ERROR_INVALID_NEW_KEY,
-               MessageType.ERROR_INVALID_ATTACHED_KEY,
-               MessageType.ERROR_INVALID_MESSAGE_TYPE,
-               MessageType.ERROR_INVALID_ENTRY_FILE,
-               MessageType.ERROR_INVALID_DOCKER_CONFIG}
-
-
 class MessageParseError(RuntimeError):
     def __init__(self, reason: str):
         self.reason = reason
@@ -59,6 +51,26 @@ class Message(dict):
             "data": self.data
         }
         dict.__init__(self, message)
+
+    ERROR_TYPES = {MessageType.ERROR_PROCESS_KILLED,
+                   MessageType.ERROR_PROCESS_TIMEOUT,
+                   MessageType.ERROR_INVALID_NEW_KEY,
+                   MessageType.ERROR_INVALID_ATTACHED_KEY,
+                   MessageType.ERROR_INVALID_MESSAGE_TYPE,
+                   MessageType.ERROR_INVALID_ENTRY_FILE,
+                   MessageType.ERROR_INVALID_DOCKER_CONFIG}
+
+    END_TYPES = {MessageType.END,
+                 MessageType.ERROR_INVALID_DOCKER_CONFIG,
+                 MessageType.ERROR_INVALID_ENTRY_FILE,
+                 MessageType.ERROR_PROCESS_TIMEOUT,
+                 MessageType.ERROR_PROCESS_KILLED}
+
+    def is_error(self):
+        return self.message_type in self.ERROR_TYPES
+
+    def is_end(self):
+        return self.message_type in self.END_TYPES
 
     def to_string(self, key: dict) -> str:
         message = dict(self)
@@ -105,6 +117,27 @@ class Message(dict):
     def get_datas(messages: Iterator["Message"]) -> Iterator:
         return map(lambda m: m.data, messages)
 
+    @staticmethod
+    def filter_middle_ends_to_prints(messages: Iterator["Message"]) -> Iterator["Message"]:
+        """Takes a message stream and converts all of the messages that should be at the end
+        of a set of messages but that occur in the middle into print statements with their originally
+        printed values. This fixes the edge case that someone prints one of the used keywords
+        (e.g. 'Done') inside their code."""
+        ends = []
+
+        for message in messages:
+            if message.is_end():
+                ends.append(message)
+                continue
+
+            for end in ends:
+                yield Message(MessageType.PRINT, data=end.data)
+            ends = []
+
+            yield message
+
+        yield from ends
+
 
 class Sender:
     def __init__(self):
@@ -126,7 +159,6 @@ class Receiver:
         self._lines = lines
 
     def get_messages_iterator(self) -> Iterator[Message]:
-        # TODO: Add filter for valid final messages
         key = None
 
         for line in self._lines:
@@ -142,15 +174,17 @@ class Receiver:
 
             yield message
 
-    keyword_messages = {"Killed": Message(MessageType.ERROR_PROCESS_KILLED, {}),
-                        "Done": Message(MessageType.END, {}),
-                        "Timeout": Message(MessageType.ERROR_PROCESS_TIMEOUT, {})}
+    keyword_messages = {".+\\d+ Killed\\s+timeout .+ python3 .+": MessageType.ERROR_PROCESS_KILLED,
+                        "Done": MessageType.END,
+                        "Timeout": MessageType.ERROR_PROCESS_TIMEOUT}
 
     @staticmethod
     def _process_line(key: dict, line: str) -> "Message":
         # Check for special messages
-        if line in Receiver.keyword_messages:
-            return Receiver.keyword_messages[line]
+        for key in Receiver.keyword_messages.keys():
+            keyword_rex = re.compile("^{}$".format(key))
+            if keyword_rex.match(line) is not None:
+                return Message(Receiver.keyword_messages[key], {"str": line})
 
         # Check for commands
         try:
