@@ -181,10 +181,10 @@ class Receiver:
     @staticmethod
     def _process_line(key: dict, line: str) -> "Message":
         # Check for special messages
-        for key in Receiver.keyword_messages.keys():
-            keyword_rex = re.compile("^{}$".format(key))
+        for keyword in Receiver.keyword_messages.keys():
+            keyword_rex = re.compile("^{}$".format(keyword))
             if keyword_rex.match(line) is not None:
-                return Message(Receiver.keyword_messages[key], {"str": line})
+                return Message(Receiver.keyword_messages[keyword], {"str": line})
 
         # Check for commands
         try:

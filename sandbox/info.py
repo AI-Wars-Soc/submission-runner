@@ -2,6 +2,7 @@ import json
 import os
 import platform
 import socket
+import subprocess
 import urllib.request
 import numpy as np
 from time import time
@@ -30,6 +31,11 @@ def writable(path):
 
 def readable(path):
     return os.access(path, os.R_OK)
+
+
+def get_all_writable():
+    result = subprocess.run(["find", "/", "-writable"], stdout=subprocess.PIPE)
+    return [path for path in result.stdout.decode().splitlines() if not path.endswith("Permission denied")]
 
 
 def get_mem():
@@ -114,7 +120,8 @@ sender = Sender()
 results = {"has_internet": connect('http://google.com'),
            "hostname_uses_loopback": hostname_uses_loopback(),
            "dirs": {path: {"readable": readable(path), "writable": writable(path)}
-                    for path in ["/", "/exec", "/exec/test.py"]},
+                    for path in ["/", "/home", "/home/sandbox/", "~/", "./", "/var/tmp", "/tmp"]},
+           "all_writables": get_all_writable(),
            "system": get_system_info(),
            "user": {"uid": os.getuid()},
            "process": {"cwd": os.getcwd(), "pid": os.getpid()},

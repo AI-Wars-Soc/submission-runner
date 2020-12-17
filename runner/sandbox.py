@@ -20,14 +20,19 @@ def make_sandbox_container(env_vars) -> Container:
                                   detach=True,
                                   remove=True,
                                   mem_limit=env_vars['SANDBOX_MEM_LIMIT'],
-                                  nano_cpus=int(env_vars['SANDBOX_NANO_CPUS']),
+                                  memswap_limit=env_vars['SANDBOX_MEM_LIMIT'],
+                                  cpu_period=100000,
+                                  cpu_quota=int(100000 * float(env_vars['SANDBOX_CPU_COUNT'])),
                                   tty=True,
                                   network_mode='none',
                                   # read_only=True,  # marks all volumes as read only, just in case
                                   environment=env_vars,
                                   command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
-                                  user='sandbox'
-                                  )
+                                  user='sandbox',
+                                  tmpfs={
+                                      '/tmp': 'size=64M,uid=1000',
+                                      '/var/tmp': 'size=64M,uid=1001'
+                                  })
 
 
 def _make_command(script_name: str):
@@ -51,9 +56,9 @@ def _copy_sandbox_files(container: Container):
         container.put_archive("/home/sandbox/", data)
 
     # Fix ownership
-    for subdir in ["sandbox", "shared"]:
-        logging.debug(container.exec_run("chown -R sandbox:sandbox /home/sandbox/"+subdir, user='root').output.decode())
-        logging.debug(container.exec_run(cmd="ls -a -l /home/sandbox/" + subdir, user='root').output.decode())
+    container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
+    container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
+    logging.debug(container.exec_run(cmd="ls -a -l /home/sandbox/", user='root').output.decode())
 
 
 def _error(message: Message):
@@ -112,7 +117,7 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
 
     # Get variables
     var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_PARSER_TIMEOUT',
-                 'SANDBOX_MEM_LIMIT', 'SANDBOX_NANO_CPUS']
+                 'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
     env_vars = {name: str(os.getenv(name)) for name in var_names}
     identifier = str({"script": script_name, "vars": env_vars})
     unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
@@ -137,7 +142,6 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
         yield msg
         return
     finally:
-        print(container.status, flush=True)
         if container is not None and container.status in {"running", "created", "restarting", "paused"}:
             container.kill()
         logging.info("Finished sandbox for " + identifier)

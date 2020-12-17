@@ -11,7 +11,8 @@ A sandboxed python executer for user's submissions
    outputting before it kills the container. Eg. '11'
  - `SANDBOX_API_DEBUG` enables debug mode in Flask
  - `SANDBOX_MEM_LIMIT` is per container, given in the form 100000b, 1000k, 128m, 1g, etc
- - `SANDBOX_NANO_CPUS` is the CPU quota in units of 1e-9 CPUs.
+ - `SANDBOX_CPU_COUNT` is the total amount of cpu that the sandbox can use. For example, '0.5'
+   means that the sandbox can use a maximum of 50% of one core
 
 ## Running the REST api
 This container needs access to creating new sibling containers
