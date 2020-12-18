@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.DEBUG if os.getenv('SANDBOX_API_DEBUG') else l
 
 
 @app.route('/run', methods=['GET'])
-def home():
+def run():
     file = str(request.args.get("file", "info"))
     file_name_rex = re.compile("^[a-zA-Z0-9_/]+$")
     if file_name_rex.match(file) is None:
