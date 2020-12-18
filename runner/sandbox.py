@@ -1,9 +1,15 @@
+import asyncio
+import concurrent.futures
 import tarfile
+from queue import Queue
+
 import docker
 import docker.errors
 import docker.types.daemon
 import os
 import re
+
+import requests
 from docker.models.containers import Container
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
@@ -61,8 +67,34 @@ def _copy_sandbox_files(container: Container):
     logging.debug(container.exec_run(cmd="ls -a -l /home/sandbox/", user='root').output.decode())
 
 
-def _error(message: Message):
-    logging.error("{}: {}".format(message.message_type.value, str(message.data)))
+def _error(message_type: MessageType, identifier: str, **kwargs) -> Message:
+    data = dict({'identifier': identifier}, **kwargs)
+
+    message = Message(message_type, data)
+
+    logging.error("{}: {}".format(message_type, str(data)))
+
+    return message
+
+
+def _stop_container(container: Container):
+    try:
+        if container is not None and container.status in {"running", "created", "restarting", "paused"}:
+            container.stop(timeout=3)
+    except docker.errors.NotFound:
+        pass
+
+
+def _timeout_container(container, timeout: int, identifier: str):
+    try:
+        container.wait(timeout=timeout)
+    except docker.errors.APIError as kill_e:
+        error = str(kill_e)
+        return _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=error)
+    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+        _stop_container(container)
+        return _error(MessageType.ERROR_PROCESS_TIMEOUT, identifier)
+    return None
 
 
 def _get_lines(strings):
@@ -84,7 +116,7 @@ def _get_lines(strings):
 
 
 def _run_in_container(container: Container, script_name: str, env_vars: dict):
-    container.start()
+    container.unpause()
     _copy_sandbox_files(container)
     run_script_cmd = _make_command(script_name)
     (exit_code, stream) = container.exec_run(cmd=run_script_cmd,
@@ -100,6 +132,64 @@ def _run_in_container(container: Container, script_name: str, env_vars: dict):
     yield from iterator
 
 
+def _is_script_valid(script_name: str):
+    script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
+    return os.path.exists("/exec/sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+
+
+def _get_env_vars() -> dict:
+    var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_PARSER_TIMEOUT',
+                 'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
+    env_vars = {name: str(os.getenv(name)) for name in var_names}
+    env_vars['PYTHONPATH'] = "/home/sandbox/"
+    return env_vars
+
+
+def _run_in_sandbox(script_name: str) -> Iterator[Message]:
+    # Ensure that script is valid
+    if not _is_script_valid(script_name):
+        yield _error(MessageType.ERROR_INVALID_ENTRY_FILE, str({"name": script_name}))
+        return
+
+    # Get variables
+    env_vars = _get_env_vars()
+    identifier = str({"script": script_name, "vars": env_vars})
+    unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
+    if len(unset) != 0:
+        error = f"Required environment variables are unset {str(unset)}"
+        yield _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=error)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Try to spin up a new container for the code to run in
+        logging.info("Creating new container for " + identifier)
+        container = None
+        kill_future = None
+        try:
+            # Make container
+            container = make_sandbox_container(env_vars)
+            container.pause()
+
+            # Start timeout timer
+            timeout = int(env_vars['SANDBOX_PARSER_TIMEOUT'])
+            kill_future = executor.submit(_timeout_container, container, timeout, identifier)
+
+            # Start script
+            messages = _run_in_container(container, script_name, env_vars)
+            for message in messages:
+                yield message
+        except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
+            yield _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=str(e))
+            return
+        finally:
+            _stop_container(container)
+            logging.info("Finished sandbox for " + identifier)
+
+            # Check if there was a timeout
+            kill_result = kill_future.result()
+            if kill_result is not None:
+                yield kill_result
+
+
 def run_in_sandbox(script_name: str) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
@@ -107,41 +197,5 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
     """
     logging.info("Request for script " + script_name)
 
-    # Ensure that script is valid
-    script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-    if (not os.path.exists("/exec/sandbox/" + script_name)) or script_name_rex.match(script_name) is None:
-        msg = Message(MessageType.ERROR_INVALID_ENTRY_FILE, {"name": script_name})
-        _error(msg)
-        yield msg
-        return
-
-    # Get variables
-    var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_PARSER_TIMEOUT',
-                 'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
-    env_vars = {name: str(os.getenv(name)) for name in var_names}
-    identifier = str({"script": script_name, "vars": env_vars})
-    unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
-    if len(unset) != 0:
-        msg = {"identifier": identifier, "error": "Required environment variables are unset", "vars": unset}
-        msg = Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
-        _error(msg)
-        yield msg
-    env_vars['PYTHONPATH'] = "/home/sandbox/"
-
-    # Try to spin up a new container for the code to run in
-    logging.info("Creating new container for " + identifier)
-    container = None
-    try:
-        container = make_sandbox_container(env_vars)
-        messages = _run_in_container(container, script_name, env_vars)
-        yield from Message.filter_middle_ends_to_prints(messages)
-    except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
-        msg = {"identifier": identifier, "error": str(e)}
-        msg = Message(MessageType.ERROR_INVALID_DOCKER_CONFIG, msg)
-        _error(msg)
-        yield msg
-        return
-    finally:
-        if container is not None and container.status in {"running", "created", "restarting", "paused"}:
-            container.kill()
-        logging.info("Finished sandbox for " + identifier)
+    messages = _run_in_sandbox(script_name)
+    yield from Message.filter_middle_ends_to_prints(messages)
