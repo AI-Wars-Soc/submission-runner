@@ -17,13 +17,30 @@ services:
         source: "./shared"
         target: "/exec/shared"
         read_only: true
-      - "./tmp:/tmp/sandbox"
+      - "./tmp/runner:/tmp/sandbox"
     ports:
       - "5000:5000"
+    networks:
+      - database
     environment:
+      DEBUG: "True"
       SANDBOX_COMMAND_TIMEOUT: 15s
       SANDBOX_CONTAINER_TIMEOUT: 15s
       SANDBOX_PARSER_TIMEOUT: 10
-      SANDBOX_API_DEBUG: "True"
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_CPU_COUNT: 0.5
+  database:
+    image: aiwarssoc/database
+    volumes:
+      - "./debug/database:/database"
+    networks:
+      database:
+        aliases:
+          - database
+    environment:
+      DEBUG: "True"
+      INITIAL_SCORE: 1000
+      SCORE_TURBULENCE_MILLIS: 5000
+      HEALTH_BUFFER: 100
+networks:
+  database:

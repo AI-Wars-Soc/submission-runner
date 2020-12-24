@@ -10,7 +10,7 @@ A sandboxed python executer for user's submissions
  - `SANDBOX_PARSER_TIMEOUT` gives the number of seconds that the parser will wait for the program to finish
    outputting before it kills the container, eg. '11'. This should be the primary timeout, and so should be smaller
    than the other timeouts
- - `SANDBOX_API_DEBUG` enables debug mode in Flask
+ - `DEBUG` enables debug mode
  - `SANDBOX_MEM_LIMIT` is per container, given in the form 100000b, 1000k, 128m, 1g, etc
  - `SANDBOX_CPU_COUNT` is the total amount of cpu that the sandbox can use. For example, '0.5'
    means that the sandbox can use a maximum of 50% of one core

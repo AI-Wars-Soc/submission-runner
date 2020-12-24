@@ -8,9 +8,9 @@ from runner import sandbox
 import logging
 
 app = flask.Flask(__name__)
-app.config["DEBUG"] = os.getenv('SANDBOX_API_DEBUG')
+app.config["DEBUG"] = os.getenv('DEBUG') == 'True'
 
-logging.basicConfig(level=logging.DEBUG if os.getenv('SANDBOX_API_DEBUG') else logging.WARNING)
+logging.basicConfig(level=logging.DEBUG if os.getenv('DEBUG') else logging.WARNING)
 
 
 @app.route('/run', methods=['GET'])
@@ -40,4 +40,9 @@ def run():
     return Response(json.dumps(results), status=200, mimetype='application/json')
 
 
-app.run(host='0.0.0.0')
+if __name__ == "__main__":
+    if app.config["DEBUG"]:
+        app.run(host="0.0.0.0", port=80)
+    else:
+        from waitress import serve
+        serve(app, host="0.0.0.0", port=80)
