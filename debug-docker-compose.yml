@@ -18,10 +18,10 @@ services:
         target: "/exec/shared"
         read_only: true
       - "./tmp/runner:/tmp/sandbox"
+      - "./tmp/repositories:/repositories"
+      - "./tmp/database:/database"
     ports:
       - "5000:5000"
-    networks:
-      - database
     environment:
       DEBUG: "True"
       SANDBOX_COMMAND_TIMEOUT: 15s
@@ -29,18 +29,41 @@ services:
       SANDBOX_PARSER_TIMEOUT: 10
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_CPU_COUNT: 0.5
-  database:
-    image: aiwarssoc/database
+      DATABASE_CONNECTION: "sqlite+pysqlite:////database/database.sqlite"
+  web-server:
+    build: ../front-end
+    image: aiwarssoc/front-end:debug
+    ports:
+      - "80:8080"
     volumes:
-      - "./debug/database:/database"
+      - "../front-end/server:/home/web_user/server"
+      - "./tmp/repositories:/repositories"
+      - "./tmp/database:/database"
     networks:
-      database:
-        aliases:
-          - database
+      - redis
     environment:
       DEBUG: "True"
+      TESTING: "True"
+      SERVER_NAME: "lvh.me"
+      CLIENT_ID: "389788965612-qh4j3n7fh14nfjbg7u1tmlb59mudmobj.apps.googleusercontent.com"
+      DATABASE_CONNECTION: "sqlite+pysqlite:////database/database.sqlite"
       INITIAL_SCORE: 1000
       SCORE_TURBULENCE_MILLIS: 5000
       HEALTH_BUFFER: 100
+      MAX_REPO_SIZE_BYTES: 10000000
+    secrets:
+      - secret_key
+  redis:
+    image: redis
+    volumes:
+      - "./tmp/redis:/data"
+    command: "--appendonly yes"
+    networks:
+      redis:
+        aliases:
+          - redis
 networks:
-  database:
+  redis:
+secrets:
+  secret_key:
+    file: ./debug_secret.txt

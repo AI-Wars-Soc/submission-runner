@@ -1,4 +1,6 @@
 import re
+
+import cuwais.database
 import flask
 from flask import request, Response
 import os
@@ -41,6 +43,7 @@ def run():
 
 
 if __name__ == "__main__":
+    cuwais.database.create_tables()
     if app.config["DEBUG"]:
         app.run(host="0.0.0.0", port=80)
     else:
