@@ -1,7 +1,6 @@
-import asyncio
 import concurrent.futures
+import io
 import tarfile
-from queue import Queue
 
 import docker
 import docker.errors
@@ -18,10 +17,7 @@ import logging
 _client = docker.from_env()
 
 
-_COMPRESSED_PATH = '/tmp/sandbox/compressed.tar'
-
-
-def make_sandbox_container(env_vars) -> Container:
+def _make_sandbox_container(env_vars) -> Container:
     return _client.containers.run("aiwarssoc/sandbox",
                                   detach=True,
                                   remove=True,
@@ -45,21 +41,19 @@ def _make_command(script_name: str):
     return "./sandbox/run.sh '{path}'".format(path=script_name)
 
 
-def _compress_sandbox_files():
-    with tarfile.open(_COMPRESSED_PATH, mode='w') as tar:
+def _compress_sandbox_files(fh):
+    with tarfile.open(fileobj=fh, mode='w') as tar:
         tar.add("/exec/sandbox", arcname="sandbox")
         tar.add("/exec/shared", arcname="shared")
 
 
 def _copy_sandbox_files(container: Container):
-    # Compress files to tar
-    if (not os.path.exists(_COMPRESSED_PATH)) or bool(os.getenv('SANDBOX_API_DEBUG')):
-        _compress_sandbox_files()
+    with io.BytesIO() as fh:
+        # Compress files to tar
+        _compress_sandbox_files(fh)
 
-    # Send
-    with open(_COMPRESSED_PATH, 'rb') as f:
-        data = f.read()
-        container.put_archive("/home/sandbox/", data)
+        # Send
+        container.put_archive("/home/sandbox/", fh.getvalue())
 
     # Fix ownership
     container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
@@ -91,7 +85,7 @@ def _timeout_container(container, timeout: int, identifier: str):
     except docker.errors.APIError as kill_e:
         error = str(kill_e)
         return _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=error)
-    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as timeout_e:
         _stop_container(container)
         return _error(MessageType.ERROR_PROCESS_TIMEOUT, identifier)
     return None
@@ -166,7 +160,7 @@ def _run_in_sandbox(script_name: str) -> Iterator[Message]:
         kill_future = None
         try:
             # Make container
-            container = make_sandbox_container(env_vars)
+            container = _make_sandbox_container(env_vars)
             container.pause()
 
             # Start timeout timer
@@ -181,13 +175,16 @@ def _run_in_sandbox(script_name: str) -> Iterator[Message]:
             yield _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=str(e))
             return
         finally:
-            _stop_container(container)
             logging.info("Finished sandbox for " + identifier)
 
             # Check if there was a timeout
-            kill_result = kill_future.result()
-            if kill_result is not None:
-                yield kill_result
+            if kill_future.done():
+                kill_result = kill_future.result()
+                if kill_result is not None:
+                    yield kill_result
+
+            kill_future.cancel()
+            _stop_container(container)
 
 
 def run_in_sandbox(script_name: str) -> Iterator[Message]:

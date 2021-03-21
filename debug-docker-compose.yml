@@ -17,11 +17,10 @@ services:
         source: "./shared"
         target: "/exec/shared"
         read_only: true
-      - "./tmp/runner:/tmp/sandbox"
       - "./tmp/repositories:/repositories"
       - "./tmp/database:/database"
     ports:
-      - "5000:5000"
+      - "5000:8080"
     environment:
       DEBUG: "True"
       SANDBOX_COMMAND_TIMEOUT: 15s
