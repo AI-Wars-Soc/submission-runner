@@ -1,6 +1,8 @@
 import concurrent.futures
 import io
 import tarfile
+import threading
+import time
 
 import docker
 import docker.errors
@@ -17,174 +19,172 @@ import logging
 _client = docker.from_env()
 
 
-def _make_sandbox_container(env_vars) -> Container:
-    return _client.containers.run("aiwarssoc/sandbox",
-                                  detach=True,
-                                  remove=True,
-                                  mem_limit=env_vars['SANDBOX_MEM_LIMIT'],
-                                  memswap_limit=env_vars['SANDBOX_MEM_LIMIT'],
-                                  cpu_period=100000,
-                                  cpu_quota=int(100000 * float(env_vars['SANDBOX_CPU_COUNT'])),
-                                  tty=True,
-                                  network_mode='none',
-                                  # read_only=True,  # marks all volumes as read only, just in case
-                                  environment=env_vars,
-                                  command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
-                                  user='sandbox',
-                                  tmpfs={
-                                      '/tmp': 'size=64M,uid=1000',
-                                      '/var/tmp': 'size=64M,uid=1001'
-                                  })
+class MissingEnvVarsError(RuntimeError):
+    pass
 
 
-def _make_command(script_name: str):
-    return "./sandbox/run.sh '{path}'".format(path=script_name)
+class TimedContainer:
+    """
+    A container which lives for a maximum of `timeout`ms.
+    Commands can be run on the container and files transferred to it,
+    but all of this must be done within the timeout given.
+    After this, the container will force close, with every message stream
+    closing with a `ERROR_PROCESS_TIMEOUT` message
+    """
 
+    def __init__(self, timeout):
+        self.timeout = timeout
 
-def _compress_sandbox_files(fh):
-    with tarfile.open(fileobj=fh, mode='w') as tar:
-        tar.add("/exec/sandbox", arcname="sandbox")
-        tar.add("/exec/shared", arcname="shared")
+        # Create container
+        self._env_vars = TimedContainer._get_env_vars()
+        self._container = TimedContainer._make_sandbox_container(self._env_vars)
 
+        # Copy information
+        self._copy_sandbox_files()
 
-def _copy_sandbox_files(container: Container):
-    with io.BytesIO() as fh:
-        # Compress files to tar
-        _compress_sandbox_files(fh)
+        # Create kill thread
+        self.stopped = False
+        self._kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, timeout,))
+        self._kill_thread.setDaemon(True)
+        self._kill_thread.start()
+        self._killed_messages = []
 
-        # Send
-        container.put_archive("/home/sandbox/", fh.getvalue())
-
-    # Fix ownership
-    container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
-    container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
-    logging.debug(container.exec_run(cmd="ls -a -l /home/sandbox/", user='root').output.decode())
-
-
-def _error(message_type: MessageType, identifier: str, **kwargs) -> Message:
-    data = dict({'identifier': identifier}, **kwargs)
-
-    message = Message(message_type, data)
-
-    logging.error("{}: {}".format(message_type, str(data)))
-
-    return message
-
-
-def _stop_container(container: Container):
-    try:
-        if container is not None and container.status in {"running", "created", "restarting", "paused"}:
-            container.stop(timeout=3)
-    except docker.errors.NotFound:
-        pass
-
-
-def _timeout_container(container, timeout: int, identifier: str):
-    try:
-        container.wait(timeout=timeout)
-    except docker.errors.APIError as kill_e:
-        error = str(kill_e)
-        return _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=error)
-    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as timeout_e:
-        _stop_container(container)
-        return _error(MessageType.ERROR_PROCESS_TIMEOUT, identifier)
-    return None
-
-
-def _get_lines(strings):
-    line = []
-    for string in strings:
-        if string is None or string == "":
-            continue
-        string = str(string.decode())
-        for char in string:
-            if char == "\r" or char == "\n":
-                if len(line) != 0:
-                    yield "".join(line)
-                line = []
-            else:
-                line.append(char)
-
-    if len(line) != 0:
-        yield "".join(line)
-
-
-def _run_in_container(container: Container, script_name: str, env_vars: dict):
-    container.unpause()
-    _copy_sandbox_files(container)
-    run_script_cmd = _make_command(script_name)
-    (exit_code, stream) = container.exec_run(cmd=run_script_cmd,
-                                             user='sandbox',
-                                             stream=True,
-                                             environment=env_vars,
-                                             workdir="/home/sandbox/")
-
-    # Process lines
-    lines = _get_lines(stream)
-    receiver = Receiver(lines)
-    iterator = receiver.get_messages_iterator()
-    yield from iterator
-
-
-def _is_script_valid(script_name: str):
-    script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-    return os.path.exists("/exec/sandbox/" + script_name) and script_name_rex.match(script_name) is not None
-
-
-def _get_env_vars() -> dict:
-    var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT', 'SANDBOX_PARSER_TIMEOUT',
-                 'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
-    env_vars = {name: str(os.getenv(name)) for name in var_names}
-    env_vars['PYTHONPATH'] = "/home/sandbox/"
-    return env_vars
-
-
-def _run_in_sandbox(script_name: str) -> Iterator[Message]:
-    # Ensure that script is valid
-    if not _is_script_valid(script_name):
-        yield _error(MessageType.ERROR_INVALID_ENTRY_FILE, str({"name": script_name}))
-        return
-
-    # Get variables
-    env_vars = _get_env_vars()
-    identifier = str({"script": script_name, "vars": env_vars})
-    unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
-    if len(unset) != 0:
-        error = f"Required environment variables are unset {str(unset)}"
-        yield _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=error)
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Try to spin up a new container for the code to run in
-        logging.info("Creating new container for " + identifier)
-        container = None
-        kill_future = None
+    def stop(self):
         try:
-            # Make container
-            container = _make_sandbox_container(env_vars)
-            container.pause()
-
-            # Start timeout timer
-            timeout = int(env_vars['SANDBOX_PARSER_TIMEOUT'])
-            kill_future = executor.submit(_timeout_container, container, timeout, identifier)
-
-            # Start script
-            messages = _run_in_container(container, script_name, env_vars)
-            for message in messages:
-                yield message
-        except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
-            yield _error(MessageType.ERROR_INVALID_DOCKER_CONFIG, identifier, error=str(e))
-            return
+            if self._container is not None and self._container.status in {"running", "created", "restarting", "paused"}:
+                self._container.stop(timeout=3)
+        except docker.errors.NotFound:
+            pass
         finally:
-            logging.info("Finished sandbox for " + identifier)
+            self._container = None
 
-            # Check if there was a timeout
-            if kill_future.done():
-                kill_result = kill_future.result()
-                if kill_result is not None:
-                    yield kill_result
+    def __enter__(self):
+        return self
 
-            kill_future.cancel()
-            _stop_container(container)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+    @staticmethod
+    def _get_env_vars() -> dict:
+        var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT',
+                     'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
+        env_vars = {name: str(os.getenv(name)) for name in var_names}
+        env_vars['PYTHONPATH'] = "/home/sandbox/"
+
+        unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
+        if len(unset) != 0:
+            error = f"Required environment variables are unset {str(unset)}"
+            raise MissingEnvVarsError(error)
+
+        return env_vars
+
+    @staticmethod
+    def _make_sandbox_container(env_vars) -> Container:
+        return _client.containers.run("aiwarssoc/sandbox",
+                                      detach=True,
+                                      remove=True,
+                                      mem_limit=env_vars['SANDBOX_MEM_LIMIT'],
+                                      memswap_limit=env_vars['SANDBOX_MEM_LIMIT'],
+                                      cpu_period=100000,
+                                      cpu_quota=int(100000 * float(env_vars['SANDBOX_CPU_COUNT'])),
+                                      tty=True,
+                                      network_mode='none',
+                                      # read_only=True,  # marks all volumes as read only, just in case
+                                      environment=env_vars,
+                                      command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
+                                      user='sandbox',
+                                      tmpfs={
+                                          '/tmp': 'size=64M,uid=1000',
+                                          '/var/tmp': 'size=64M,uid=1001'
+                                      })
+
+    @staticmethod
+    def _compress_sandbox_files(fh):
+        with tarfile.open(fileobj=fh, mode='w') as tar:
+            tar.add("/exec/sandbox", arcname="sandbox")
+            tar.add("/exec/shared", arcname="shared")
+
+    def _copy_sandbox_files(self):
+        with io.BytesIO() as fh:
+            # Compress files to tar
+            TimedContainer._compress_sandbox_files(fh)
+
+            # Send
+            self._container.put_archive("/home/sandbox/", fh.getvalue())
+
+        # Fix ownership
+        self._container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
+        self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
+        logging.debug(self._container.exec_run(cmd="ls -a -l /home/sandbox/", user='root').output.decode())
+
+    def _error(self, message_type: MessageType, **kwargs) -> Message:
+        data = dict({'identifier': str(self)}, **kwargs)
+
+        message = Message(message_type, data)
+
+        logging.error("{}: {}".format(message_type, str(data)))
+
+        return message
+
+    @staticmethod
+    def _timeout_method(container: 'TimedContainer', timeout: int):
+        try:
+            container._container.wait(timeout=timeout)
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+            container._killed_messages.append(container._error(MessageType.ERROR_PROCESS_TIMEOUT))
+            container.stop()
+
+    @staticmethod
+    def _get_lines(strings):
+        line = []
+        for string in strings:
+            if string is None or string == "":
+                continue
+            string = str(string.decode())
+            for char in string:
+                if char == "\r" or char == "\n":
+                    if len(line) != 0:
+                        yield "".join(line)
+                    line = []
+                else:
+                    line.append(char)
+
+        if len(line) != 0:
+            yield "".join(line)
+
+    @staticmethod
+    def _is_script_valid(script_name: str):
+        script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
+        return os.path.exists("/exec/sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+
+    def _run_unfiltered(self, script_name: str) -> Iterator[Message]:
+        # Ensure that script is valid
+        if not TimedContainer._is_script_valid(script_name):
+            yield self._error(MessageType.ERROR_INVALID_ENTRY_FILE)
+            return
+
+        # Start script
+        run_script_cmd = "./sandbox/run.sh '{path}'".format(path=script_name)
+        (exit_code, stream) = self._container.exec_run(cmd=run_script_cmd,
+                                                       user='sandbox',
+                                                       stream=True,
+                                                       environment=self._env_vars,
+                                                       workdir="/home/sandbox/")
+
+        # Process lines
+        lines = TimedContainer._get_lines(stream)
+        receiver = Receiver(lines)
+        iterator = receiver.get_messages_iterator()
+        yield from iterator
+
+        yield from self._killed_messages
+
+    def run(self, script_name: str) -> Iterator[Message]:
+        messages = self._run_unfiltered(script_name)
+        yield from Message.filter_middle_ends_to_prints(messages)
+
+    def __str__(self):
+        return f"TimedContainer<{self._container}>"
 
 
 def run_in_sandbox(script_name: str) -> Iterator[Message]:
@@ -194,5 +194,6 @@ def run_in_sandbox(script_name: str) -> Iterator[Message]:
     """
     logging.info("Request for script " + script_name)
 
-    messages = _run_in_sandbox(script_name)
-    yield from Message.filter_middle_ends_to_prints(messages)
+    timeout = int(os.getenv('SANDBOX_PARSER_TIMEOUT'))
+    with TimedContainer(timeout) as container:
+        yield from container.run(script_name)

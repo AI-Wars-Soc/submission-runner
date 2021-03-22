@@ -1,12 +1,9 @@
-import asyncio
 import re
-import threading
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
-from queue import Queue
-from typing import Tuple, Iterator, List, Set, Union
+from typing import Tuple, Iterator, Set, Union
 import collections
 
 
@@ -22,7 +19,6 @@ class MessageType(Enum):
     ERROR_INVALID_ATTACHED_KEY = "ERROR_INVALID_ATTACHED_KEY"
     ERROR_INVALID_MESSAGE_TYPE = "ERROR_INVALID_MESSAGE_TYPE"
     ERROR_INVALID_ENTRY_FILE = "ERROR_INVALID_ENTRY_FILE"
-    ERROR_INVALID_DOCKER_CONFIG = "ERROR_INVALID_DOCKER_CONFIG"
 
     @staticmethod
     def is_message_type(val: str):
@@ -57,11 +53,9 @@ class Message(dict):
                    MessageType.ERROR_INVALID_NEW_KEY,
                    MessageType.ERROR_INVALID_ATTACHED_KEY,
                    MessageType.ERROR_INVALID_MESSAGE_TYPE,
-                   MessageType.ERROR_INVALID_ENTRY_FILE,
-                   MessageType.ERROR_INVALID_DOCKER_CONFIG}
+                   MessageType.ERROR_INVALID_ENTRY_FILE}
 
     END_TYPES = {MessageType.END,
-                 MessageType.ERROR_INVALID_DOCKER_CONFIG,
                  MessageType.ERROR_INVALID_ENTRY_FILE,
                  MessageType.ERROR_PROCESS_TIMEOUT,
                  MessageType.ERROR_PROCESS_KILLED}
