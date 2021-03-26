@@ -3,6 +3,7 @@ import io
 import tarfile
 import threading
 import time
+from pathlib import Path
 
 import docker
 import docker.errors
@@ -40,7 +41,7 @@ class TimedContainer:
         self._container = TimedContainer._make_sandbox_container(self._env_vars)
 
         # Copy information
-        self._copy_sandbox_files()
+        self._copy_sandbox_scripts()
 
         # Create kill thread
         self.stopped = False
@@ -104,7 +105,7 @@ class TimedContainer:
             tar.add("/exec/sandbox", arcname="sandbox")
             tar.add("/exec/shared", arcname="shared")
 
-    def _copy_sandbox_files(self):
+    def _copy_sandbox_scripts(self):
         with io.BytesIO() as fh:
             # Compress files to tar
             TimedContainer._compress_sandbox_files(fh)
@@ -179,6 +180,23 @@ class TimedContainer:
 
         yield from self._killed_messages
 
+    @staticmethod
+    def _is_submission_valid(submission_hash: str, submission_path: str):
+        submission_hash_rex = re.compile("^[a-f0-9]+$")
+        return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
+
+    def copy_submission(self, submission_hash: str, container_dir: str):
+        submission_path = f"/repositories/{submission_hash}.tar"
+        # Ensure that submission is valid
+        if not TimedContainer._is_submission_valid(submission_hash, submission_path):
+            return self._error(MessageType.ERROR_INVALID_SUBMISSION)
+
+        dest_path = os.path.join("/home/sandbox/sandbox", container_dir)
+        with open(submission_path, 'rb') as f:
+            print(f"COPYING {submission_hash} to {dest_path}", flush=True)
+            data = f.read()
+            self._container.put_archive(dest_path, data)
+
     def run(self, script_name: str) -> Iterator[Message]:
         messages = self._run_unfiltered(script_name)
         yield from Message.filter_middle_ends_to_prints(messages)
@@ -187,13 +205,19 @@ class TimedContainer:
         return f"TimedContainer<{self._container}>"
 
 
-def run_in_sandbox(script_name: str) -> Iterator[Message]:
+def run_in_sandbox(script_name: str, submission_hashes=None) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
     or an error while trying to run the sandbox.
     """
+    if submission_hashes is None:
+        submission_hashes = []
     logging.info("Request for script " + script_name)
 
     timeout = int(os.getenv('SANDBOX_PARSER_TIMEOUT'))
     with TimedContainer(timeout) as container:
+        for i, submission_hash in enumerate(submission_hashes):
+            subdir = f"submission{i + 1}"
+            container.copy_submission(submission_hash, subdir)
+
         yield from container.run(script_name)

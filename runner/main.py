@@ -26,7 +26,7 @@ def run():
     types_str = request.args.get("filter", "any")
     types_rex = re.compile("^[a-zA-Z_,]+$")
     if types_rex.match(types_str) is None:
-        return Response(str({"error": "Filter is not valid csv"}), status=400, mimetype='application/json')
+        return Response(str({"error": "Filter is not a valid csv"}), status=400, mimetype='application/json')
 
     types = set()
     for t in types_str.split(","):
@@ -36,7 +36,13 @@ def run():
         elif MessageType.is_message_type(t):
             types.add(MessageType(t))
 
-    messages = sandbox.run_in_sandbox(file)
+    submissions_str = request.args.get("submissions", "")
+    submissions_rex = re.compile("^[a-zA-Z0-9,]*$")
+    if submissions_rex.match(submissions_str) is None:
+        return Response(str({"error": "Submissions is not a valid csv"}), status=400, mimetype='application/json')
+    submissions = submissions_str.split(",")
+
+    messages = sandbox.run_in_sandbox(file, submissions)
     results = list(Message.filter(messages, types))
 
     return Response(json.dumps(results), status=200, mimetype='application/json')

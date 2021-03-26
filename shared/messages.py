@@ -19,6 +19,7 @@ class MessageType(Enum):
     ERROR_INVALID_ATTACHED_KEY = "ERROR_INVALID_ATTACHED_KEY"
     ERROR_INVALID_MESSAGE_TYPE = "ERROR_INVALID_MESSAGE_TYPE"
     ERROR_INVALID_ENTRY_FILE = "ERROR_INVALID_ENTRY_FILE"
+    ERROR_INVALID_SUBMISSION = "ERROR_INVALID_SUBMISSION"
 
     @staticmethod
     def is_message_type(val: str):
@@ -53,12 +54,14 @@ class Message(dict):
                    MessageType.ERROR_INVALID_NEW_KEY,
                    MessageType.ERROR_INVALID_ATTACHED_KEY,
                    MessageType.ERROR_INVALID_MESSAGE_TYPE,
-                   MessageType.ERROR_INVALID_ENTRY_FILE}
+                   MessageType.ERROR_INVALID_ENTRY_FILE,
+                   MessageType.ERROR_INVALID_SUBMISSION}
 
     END_TYPES = {MessageType.END,
                  MessageType.ERROR_INVALID_ENTRY_FILE,
                  MessageType.ERROR_PROCESS_TIMEOUT,
-                 MessageType.ERROR_PROCESS_KILLED}
+                 MessageType.ERROR_PROCESS_KILLED,
+                 MessageType.ERROR_INVALID_SUBMISSION}
 
     def is_error(self):
         return self.message_type in self.ERROR_TYPES
