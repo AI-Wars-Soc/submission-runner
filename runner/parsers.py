@@ -1,3 +1,5 @@
+import base64
+import zlib
 from typing import Iterator
 
 import chess
@@ -89,6 +91,7 @@ def chess_parser(messages: Iterator[Message]):
 
     host_prints = "\n".join(prints[0])
     player_prints = ["\n".join(prints[1]), "\n".join(prints[2])]
+    moves = ",".join(moves)
 
     return {"host_prints": host_prints, "player_prints": player_prints, "initial_state": initial_state,
             "moves": moves, "loser": loser, "healthy": healthy, "outcome": outcome, "final_board": board.fen()}
