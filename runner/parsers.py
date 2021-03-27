@@ -44,10 +44,10 @@ def chess_parser(messages: Iterator[Message]):
             prints[controller + 1].append(message.data["str"])
         elif message.message_type == MessageType.RESULT:
             result_type = message.data["type"]
+            player_turn = int(message.data["player_id"])
             if result_type == "initial_board":
                 initial_state = message.data["board_state"]
                 board = chess.Board(initial_state, chess960=message.data["chess960"])
-                player_turn = int(message.data["player_id"])
                 controller = -1
             elif result_type == "ai_start":
                 controller = int(message.data["player_id"])
@@ -91,7 +91,7 @@ def chess_parser(messages: Iterator[Message]):
     player_prints = ["\n".join(prints[1]), "\n".join(prints[2])]
 
     return {"host_prints": host_prints, "player_prints": player_prints, "initial_state": initial_state,
-            "moves": moves, "loser": loser, "healthy": healthy, "outcome": outcome}
+            "moves": moves, "loser": loser, "healthy": healthy, "outcome": outcome, "final_board": board.fen()}
 
 
 def get(parser):

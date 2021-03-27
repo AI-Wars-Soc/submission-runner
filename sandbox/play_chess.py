@@ -9,7 +9,7 @@ from sandbox.submission1.ai import make_move as player1_make_move
 from sandbox.submission2.ai import make_move as player2_make_move
 
 
-def make_result(result_type, reason="checkmate"):
+def make_result(result_type, reason):
     return {"type": "result", "result": result_type, "reason": reason}
 
 
