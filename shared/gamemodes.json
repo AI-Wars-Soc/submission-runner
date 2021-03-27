@@ -1,0 +1,20 @@
+{
+  "info": {
+    "script": "info",
+    "players": 0
+  },
+  "chess": {
+    "script": "play_chess",
+    "players": 2,
+    "options": {
+      "chess960": {
+        "type": "boolean",
+        "default": false
+      },
+      "chess_clock": {
+        "type": "float",
+        "default": 10.0
+      }
+    }
+  }
+}

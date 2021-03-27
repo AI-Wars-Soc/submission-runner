@@ -1,3 +1,4 @@
+import os
 import random
 
 import chess
@@ -29,7 +30,7 @@ class Player:
         return self.time_remaining < 0
 
     def get_move(self, board):
-        board_copy = chess.Board(board.fen(), chess960=True)
+        board_copy = chess.Board(board.fen(), chess960=board.chess960)
 
         start_time = time.time_ns()
         move = self.move_function(board_copy, self.time_remaining)
@@ -45,9 +46,16 @@ class Player:
 
 def main():
     sender = Sender()
-    board = chess.Board.from_chess960_pos(random.randint(0, 959))
 
-    players = [Player(i, 10.0, fn) for i, fn in enumerate([player1_make_move, player2_make_move])]
+    is_960 = os.getenv("chess960").lower().startswith("t")
+    chess_clock_time = float(os.getenv("chess_clock"))
+
+    if is_960:
+        board = chess.Board.from_chess960_pos(random.randint(0, 959))
+    else:
+        board = chess.Board()
+
+    players = [Player(i, chess_clock_time, fn) for i, fn in enumerate([player1_make_move, player2_make_move])]
     player_id = 0
 
     sender.send_result({"type": "initial_board", **make_message(board, player_id, players)})

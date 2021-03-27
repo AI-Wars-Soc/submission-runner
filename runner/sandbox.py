@@ -1,9 +1,6 @@
-import concurrent.futures
 import io
 import tarfile
 import threading
-import time
-from pathlib import Path
 
 import docker
 import docker.errors
@@ -13,6 +10,8 @@ import re
 
 import requests
 from docker.models.containers import Container
+
+from shared.gamemodes import Gamemode
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
 import logging
@@ -116,7 +115,6 @@ class TimedContainer:
         # Fix ownership
         self._container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
         self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
-        logging.debug(self._container.exec_run(cmd="ls -a -l /home/sandbox/", user='root').output.decode())
 
     def _error(self, message_type: MessageType, **kwargs) -> Message:
         data = dict({'identifier': str(self)}, **kwargs)
@@ -158,18 +156,24 @@ class TimedContainer:
         script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
         return os.path.exists("/exec/sandbox/" + script_name) and script_name_rex.match(script_name) is not None
 
-    def _run_unfiltered(self, script_name: str) -> Iterator[Message]:
+    def _run_unfiltered(self, script_name: str, extra_args: dict) -> Iterator[Message]:
+        if extra_args is None:
+            extra_args = dict()
+
         # Ensure that script is valid
         if not TimedContainer._is_script_valid(script_name):
             yield self._error(MessageType.ERROR_INVALID_ENTRY_FILE)
             return
+
+        # Get env vars
+        env_vars = {**self._env_vars, **extra_args}
 
         # Start script
         run_script_cmd = "./sandbox/run.sh '{path}'".format(path=script_name)
         (exit_code, stream) = self._container.exec_run(cmd=run_script_cmd,
                                                        user='sandbox',
                                                        stream=True,
-                                                       environment=self._env_vars,
+                                                       environment=env_vars,
                                                        workdir="/home/sandbox/")
 
         # Process lines
@@ -193,26 +197,32 @@ class TimedContainer:
 
         dest_path = os.path.join("/home/sandbox/sandbox", container_dir)
         with open(submission_path, 'rb') as f:
-            print(f"COPYING {submission_hash} to {dest_path}", flush=True)
             data = f.read()
             self._container.put_archive(dest_path, data)
 
-    def run(self, script_name: str) -> Iterator[Message]:
-        messages = self._run_unfiltered(script_name)
+    def run(self, script_name: str, extra_args=None) -> Iterator[Message]:
+        messages = self._run_unfiltered(script_name, extra_args)
         yield from Message.filter_middle_ends_to_prints(messages)
 
     def __str__(self):
         return f"TimedContainer<{self._container}>"
 
 
-def run_in_sandbox(script_name: str, submission_hashes=None) -> Iterator[Message]:
+def run_in_sandbox(gamemode: Gamemode, submission_hashes=None, options=None) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
     or an error while trying to run the sandbox.
     """
+    script_name = gamemode.script
+
     if submission_hashes is None:
         submission_hashes = []
+    if options is None:
+        options = dict()
     logging.info("Request for script " + script_name)
+
+    print(f"Options: {options}", flush=True)
+    option_args = gamemode.create_env_vars(**options)
 
     timeout = int(os.getenv('SANDBOX_PARSER_TIMEOUT'))
     with TimedContainer(timeout) as container:
@@ -220,4 +230,4 @@ def run_in_sandbox(script_name: str, submission_hashes=None) -> Iterator[Message
             subdir = f"submission{i + 1}"
             container.copy_submission(submission_hash, subdir)
 
-        yield from container.run(script_name)
+        yield from container.run(script_name, option_args)
