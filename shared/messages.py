@@ -58,10 +58,7 @@ class Message(dict):
                    MessageType.ERROR_INVALID_SUBMISSION}
 
     END_TYPES = {MessageType.END,
-                 MessageType.ERROR_INVALID_ENTRY_FILE,
-                 MessageType.ERROR_PROCESS_TIMEOUT,
-                 MessageType.ERROR_PROCESS_KILLED,
-                 MessageType.ERROR_INVALID_SUBMISSION}
+                 *ERROR_TYPES}
 
     def is_error(self):
         return self.message_type in self.ERROR_TYPES

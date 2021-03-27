@@ -5,6 +5,7 @@
   },
   "chess": {
     "script": "play_chess",
+    "parser": "chess",
     "players": 2,
     "options": {
       "chess960": {

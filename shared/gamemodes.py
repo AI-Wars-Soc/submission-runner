@@ -2,9 +2,10 @@ import json
 import os
 from typing import Iterator, Dict
 
+from runner import parsers
 
 _type_names = {
-    "boolean": bool,
+    "boolean": lambda b: str(b).lower().startswith("t"),
     "string": str,
     "float": float,
     "integer": int
@@ -12,9 +13,10 @@ _type_names = {
 
 
 class Gamemode:
-    def __init__(self, name, script, players, options):
+    def __init__(self, name, script, parser, players, options):
         self.name = str(name)
         self.script = str(script) + ".py"
+        self.parse = parsers.get(parser)
         self.players = int(players)
         self.options = dict(options)
 
@@ -56,7 +58,8 @@ def _parse():
         data = json.load(fp)
 
     for name, info in data.items():
-        yield Gamemode(name, info["script"], info["players"], info.get("options", dict()))
+        yield Gamemode(name, info["script"], info.get("parser", "default"),
+                       info["players"], info.get("options", dict()))
 
 
 _gamemodes = {gm.name: gm for gm in _parse()}

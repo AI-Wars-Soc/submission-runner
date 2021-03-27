@@ -1,5 +1,3 @@
-import re
-
 import cuwais.database
 import flask
 from flask import request, Response
@@ -7,7 +5,6 @@ import os
 import json
 
 from shared.gamemodes import Gamemode
-from shared.messages import MessageType, Message
 from runner import sandbox
 import logging
 
@@ -35,8 +32,9 @@ def run():
             del options[v]
 
     messages = sandbox.run_in_sandbox(gamemode, submissions, options)
+    parsed = gamemode.parse(messages)
 
-    return Response(json.dumps(list(messages)), status=200, mimetype='application/json')
+    return Response(json.dumps(parsed), status=200, mimetype='application/json')
 
 
 if __name__ == "__main__":

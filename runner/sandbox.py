@@ -221,7 +221,6 @@ def run_in_sandbox(gamemode: Gamemode, submission_hashes=None, options=None) -> 
         options = dict()
     logging.info("Request for script " + script_name)
 
-    print(f"Options: {options}", flush=True)
     option_args = gamemode.create_env_vars(**options)
 
     timeout = int(os.getenv('SANDBOX_PARSER_TIMEOUT'))

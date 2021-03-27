@@ -58,12 +58,15 @@ def main():
     players = [Player(i, chess_clock_time, fn) for i, fn in enumerate([player1_make_move, player2_make_move])]
     player_id = 0
 
-    sender.send_result({"type": "initial_board", **make_message(board, player_id, players)})
+    sender.send_result({"type": "initial_board", "chess960": is_960,
+                        **make_message(board, player_id, players)})
 
     while not board.is_game_over():
         player = players[player_id]
 
+        sender.send_result({"type": "ai_start", "player_id": player_id})
         move = player.get_move(board)
+        sender.send_result({"type": "ai_end", "player_id": player_id})
 
         if player.is_out_of_time():
             sender.send_result({**make_result("loss", "timeout"),
