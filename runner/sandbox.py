@@ -195,7 +195,14 @@ class TimedContainer:
         if not TimedContainer._is_submission_valid(submission_hash, submission_path):
             return self._error(MessageType.ERROR_INVALID_SUBMISSION)
 
+        # Make destination
         dest_path = os.path.join("/home/sandbox/sandbox", container_dir)
+        self._container.exec_run(f"mkdir {dest_path}", user='root')
+
+        # Make required init file for python
+        init_path = os.path.join(dest_path, "__init__.py")
+        self._container.exec_run(f"touch {init_path}", user='root')
+
         with open(submission_path, 'rb') as f:
             data = f.read()
             self._container.put_archive(dest_path, data)
