@@ -4,8 +4,7 @@ from flask import request, Response
 import os
 import json
 
-from shared.gamemodes import Gamemode
-from runner import sandbox
+from runner import sandbox, gamemodes
 import logging
 
 app = flask.Flask(__name__)
@@ -17,7 +16,7 @@ logging.basicConfig(level=logging.DEBUG if os.getenv('DEBUG') else logging.WARNI
 @app.route('/run', methods=['GET'])
 def run():
     gamemode_name = str(request.args.get("gamemode", "info"))
-    gamemode = Gamemode.get(gamemode_name)
+    gamemode = gamemodes.Gamemode.get(gamemode_name)
 
     submissions_str = request.args.get("submissions", "").lower()
     submissions = [] if submissions_str is None or submissions_str == "" else submissions_str.split(",")
@@ -32,7 +31,7 @@ def run():
             del options[v]
 
     messages = sandbox.run_in_sandbox(gamemode, submissions, options)
-    parsed = gamemode.parse(messages)
+    parsed = dict(gamemode.parse(messages))
 
     return Response(json.dumps(parsed), status=200, mimetype='application/json')
 

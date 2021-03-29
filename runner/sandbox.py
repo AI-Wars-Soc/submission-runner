@@ -11,7 +11,7 @@ import re
 import requests
 from docker.models.containers import Container
 
-from shared.gamemodes import Gamemode
+from runner import gamemodes
 from shared.messages import MessageType, Message, Receiver
 from typing import Iterator
 import logging
@@ -208,7 +208,7 @@ class TimedContainer:
         return f"TimedContainer<{self._container}>"
 
 
-def run_in_sandbox(gamemode: Gamemode, submission_hashes=None, options=None) -> Iterator[Message]:
+def run_in_sandbox(gamemode: gamemodes.Gamemode, submission_hashes=None, options=None) -> Iterator[Message]:
     """runs the given script in a sandbox and returns a result list.
     Each item in the list is of type 'Message' and is either output from the sandbox
     or an error while trying to run the sandbox.

@@ -1,12 +1,12 @@
+import importlib
 import os
 import random
 
 import chess
 import time
 
+from sandbox import player_import
 from shared.messages import Sender
-from sandbox.submission1.ai import make_move as player1_make_move
-from sandbox.submission2.ai import make_move as player2_make_move
 
 
 def make_result(result_type, reason):
@@ -47,6 +47,15 @@ class Player:
 def main():
     sender = Sender()
 
+    move_functions = []
+    for i in range(2):
+        try:
+            move_functions.append(player_import.get_player_function(i, "ai", "make_move"))
+        except player_import.MissingFunctionError:
+            sender.send_result({"type": "missing_function", "player_id": i})
+    if len(move_functions) != 2:
+        return
+
     is_960 = os.getenv("chess960").lower().startswith("t")
     chess_clock_time = float(os.getenv("chess_clock"))
 
@@ -55,7 +64,7 @@ def main():
     else:
         board = chess.Board()
 
-    players = [Player(i, chess_clock_time, fn) for i, fn in enumerate([player1_make_move, player2_make_move])]
+    players = [Player(i, chess_clock_time, fn) for i, fn in enumerate(move_functions)]
     player_id = 0
 
     sender.send_result({"type": "initial_board", "chess960": is_960,
