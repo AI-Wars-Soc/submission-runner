@@ -18,7 +18,8 @@ services:
         target: "/exec/shared"
         read_only: true
       - "./tmp/repositories:/repositories"
-      - "./tmp/database:/database"
+    networks:
+      - database
     ports:
       - "5000:8080"
     environment:
@@ -28,7 +29,14 @@ services:
       SANDBOX_PARSER_TIMEOUT: 10
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_CPU_COUNT: 0.5
-      DATABASE_CONNECTION: "sqlite+pysqlite:////database/database.sqlite"
+      DATABASE_CONNECTION: "postgresql://debug:debug@database"
+      SCORE_TURBULENCE_MILLIS: 100
+      GAMEMODE: chess
+      MATCHMAKERS: 2
+      GAME_OPTIONS: '{}'
+      SECONDS_PER_RUN: 20
+    depends_on:
+      - database
   web-server:
     build: ../front-end
     image: aiwarssoc/front-end:debug
@@ -37,21 +45,24 @@ services:
     volumes:
       - "../front-end/server:/home/web_user/server"
       - "./tmp/repositories:/repositories"
-      - "./tmp/database:/database"
     networks:
       - redis
+      - database
     environment:
       DEBUG: "True"
       TESTING: "True"
       SERVER_NAME: "lvh.me"
       CLIENT_ID: "389788965612-qh4j3n7fh14nfjbg7u1tmlb59mudmobj.apps.googleusercontent.com"
-      DATABASE_CONNECTION: "sqlite+pysqlite:////database/database.sqlite"
+      DATABASE_CONNECTION: "postgresql://debug:debug@database"
       INITIAL_SCORE: 1000
       SCORE_TURBULENCE_MILLIS: 5000
       HEALTH_BUFFER: 100
       MAX_REPO_SIZE_BYTES: 10000000
     secrets:
       - secret_key
+    depends_on:
+      - database
+      - redis
   redis:
     image: redis
     volumes:
@@ -61,8 +72,27 @@ services:
       redis:
         aliases:
           - redis
+  database:
+    image: postgres
+    networks:
+      database:
+        aliases:
+          - database
+    environment:
+      POSTGRES_USER: debug
+      POSTGRES_PASSWORD: debug
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
+    networks:
+      - database
+    depends_on:
+      - database
+
 networks:
   redis:
+  database:
 secrets:
   secret_key:
     file: ./debug_secret.txt
