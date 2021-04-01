@@ -7,6 +7,8 @@ import json
 from runner import sandbox, gamemodes
 import logging
 
+from runner.matchmaker import Matchmaker
+
 app = flask.Flask(__name__)
 app.config["DEBUG"] = os.getenv('DEBUG') == 'True'
 
@@ -37,7 +39,21 @@ def run():
 
 
 if __name__ == "__main__":
+    # Get some options
+    gamemode = gamemodes.Gamemode.get(os.getenv("GAMEMODE").lower())
+    options = json.loads(os.getenv("GAME_OPTIONS"))
+    matchmakers = int(os.getenv("MATCHMAKERS"))
+    seconds_per_run = int(os.getenv("SECONDS_PER_RUN"))
+
+    # Set up database
     cuwais.database.create_tables()
+
+    # Start up matchmakers
+    for i in range(matchmakers):
+        matchmaker = Matchmaker(gamemode, options, i == 0, seconds_per_run)
+        matchmaker.start()
+
+    # Serve webpages
     if app.config["DEBUG"]:
         app.run(host="0.0.0.0", port=8080)
     else:

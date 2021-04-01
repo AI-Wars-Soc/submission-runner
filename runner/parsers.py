@@ -6,19 +6,28 @@ from cuwais.common import Outcome
 from shared.messages import Message, MessageType
 
 
-class ParsedResult(dict):
-    def __init__(self, recording, outcomes: List[Outcome], healths: List[bool], player_ids: List[str]):
-        self.recording = str(recording)
-        self.outcomes = outcomes
-        self.outcome_ints = [int(o.value) for o in outcomes]
-        self.healths = healths
-        self.player_ids = player_ids
+class SingleResult(dict):
+    def __init__(self, outcome: Outcome, healthy: bool, player_id: str):
+        self.outcome = outcome
+        self.healthy = healthy
+        self.player_id = player_id
 
-        super().__init__(recording=recording, outcomes=self.outcome_ints, healths=healths, player_ids=player_ids)
+        super().__init__(outcome=outcome.value, healthy=healthy, player_id=player_id)
+
+
+class ParsedResult(dict):
+    def __init__(self, recording, submission_results: List[SingleResult]):
+        self.recording = str(recording)
+        self.outcomes = [r.outcome for r in submission_results]
+        self.healths = [r.healthy for r in submission_results]
+        self.player_ids = [r.player_id for r in submission_results]
+        self.submission_results = submission_results
+
+        super().__init__(recording=recording, submission_results=submission_results)
 
 
 def none_parser(messages: Iterator[Message]) -> ParsedResult:
-    return ParsedResult(list(messages), [], [], [])
+    return ParsedResult(list(messages), [])
 
 
 def default_parser(messages: Iterator[Message]):
@@ -38,7 +47,7 @@ def default_parser(messages: Iterator[Message]):
     end = dict(end)
 
     record = {"printed": prints, "results": results, "end": end}
-    return ParsedResult(record, [], [], [])
+    return ParsedResult(record, [])
 
 
 def chess_parser(messages: Iterator[Message]):
@@ -119,9 +128,11 @@ def chess_parser(messages: Iterator[Message]):
     else:
         final_board = board.fen()
 
+    submission_results = [SingleResult(o, h, p) for o, h, p in zip(outcome, healths, ["white", "black"])]
+
     record = {"host_prints": host_prints, "player_prints": player_prints, "initial_state": initial_state,
               "moves": moves, "loser": loser, "outcome_txt": outcome_txt, "final_board": final_board}
-    return ParsedResult(record, outcome, healths, ["white", "black"])
+    return ParsedResult(record, submission_results)
 
 
 def get(parser) -> Callable[[Iterator[Message]], ParsedResult]:
