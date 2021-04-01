@@ -31,6 +31,7 @@ services:
       SANDBOX_CPU_COUNT: 0.5
       DATABASE_CONNECTION: "postgresql://debug:debug@database"
       SCORE_TURBULENCE_MILLIS: 100
+      INITIAL_SCORE: 1000
       GAMEMODE: chess
       MATCHMAKERS: 2
       GAME_OPTIONS: '{}'
@@ -50,14 +51,11 @@ services:
       - database
     environment:
       DEBUG: "True"
-      TESTING: "True"
       SERVER_NAME: "lvh.me"
       CLIENT_ID: "389788965612-qh4j3n7fh14nfjbg7u1tmlb59mudmobj.apps.googleusercontent.com"
       DATABASE_CONNECTION: "postgresql://debug:debug@database"
-      INITIAL_SCORE: 1000
-      SCORE_TURBULENCE_MILLIS: 5000
-      HEALTH_BUFFER: 100
       MAX_REPO_SIZE_BYTES: 10000000
+      INITIAL_SCORE: 1000
     secrets:
       - secret_key
     depends_on:

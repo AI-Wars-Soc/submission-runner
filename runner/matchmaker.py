@@ -1,7 +1,7 @@
 import logging
+import math
 import os
 import random
-import threading
 import time
 from datetime import datetime, timezone
 from threading import Thread
@@ -14,6 +14,8 @@ from sqlalchemy import func, and_
 
 from runner import gamemodes, sandbox
 from runner.parsers import ParsedResult, SingleResult
+
+logger = logging.getLogger(__name__)
 
 
 def _get_all_latest_healthy_submissions() -> List[Submission]:
@@ -169,12 +171,14 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
         if result.outcome == single_team_outcome:
             position_in_team = single_team_elos.index(elo)
             opponent_position = len(single_team_elos) - position_in_team - 1
+            opponent_elo = single_team_elos[opponent_position]
 
             if opponent_position != position_in_team:
-                expected = 1 if position_in_team < opponent_position else 0
-                delta += _calculate_delta_scores_pair(elo, single_team_elos[opponent_position], expected)
+                delta += _calculate_delta_scores_pair(elo, opponent_elo, 0.5)
 
         deltas.append(delta)
+
+    logger.debug(f"Calculated some ELO Deltas: {deltas}, winners: {[r.outcome for r in results]}")
 
     # Assertions
     assert len(deltas) == len(results)
@@ -182,36 +186,41 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
     # Check that this works the same as Elo for two player games
     if len(results) == 2:
         if results[0].outcome == results[1].outcome == Outcome.Draw:
-            assert min(deltas) == _calculate_delta_scores_pair(min(current_elos), max(current_elos), 0.5)
+            exp_delta = _calculate_delta_scores_pair(min(current_elos), max(current_elos), 0.5)
+            assert math.isclose(max(deltas), exp_delta, rel_tol=1e-9, abs_tol=0.0)
         if results[0].outcome != results[1].outcome:
             v = 1 if results[0].outcome == Outcome.Win else 0
-            assert deltas[0] == _calculate_delta_scores_pair(current_elos[0], current_elos[1], v)
+            exp_delta = _calculate_delta_scores_pair(current_elos[0], current_elos[1], v)
+            assert math.isclose(deltas[0], exp_delta, rel_tol=1e-9, abs_tol=0.0)
 
     return deltas
 
 
 def _get_elos(submission_ids: list):
-    init = int(os.getenv("INITIAL_SCORE_MILLIS")) / 1000.0
+    init = float(os.getenv("INITIAL_SCORE"))
 
     with cuwais.database.create_session() as database_session:
-        subq = database_session.query(Submission.id, Submission.user_id)\
-            .filter(Submission.id.in_(submission_ids))\
-            .subquery('t1')
+        subq = database_session.query(
+            Submission.user_id,
+            func.sum(Result.points_delta).label('elo')
+        ).filter(Submission.id.in_(submission_ids))\
+            .join(Submission.results)\
+            .group_by(Submission.user_id)\
+            .subquery("t1")
 
         res = database_session.query(
-            subq.c.id,
-            func.sum(Result.points_delta).label('elo')
-        ).group_by(Submission.user_id)\
-            .join(
-            subq,
-            and_(
-                Submission.user_id == subq.c.user_id
-            )
+            Submission.id,
+            subq.c.elo
+        ).filter(
+            Submission.id.in_(submission_ids),
+            Submission.user_id == subq.c.user_id
         ).all()
 
     elo_lookup = {v["id"]: v["elo"] for v in res}
 
-    elos = [elo_lookup.get(i, default=0) + init for i in submission_ids]
+    elos = [elo_lookup.get(i, 0) + init for i in submission_ids]
+
+    logger.debug(f"Calculated some ELOs: {elos}")
 
     return elos
 
@@ -219,7 +228,7 @@ def _get_elos(submission_ids: list):
 def _save_result(submissions: List[Submission],
                  result: ParsedResult,
                  update_scores: bool) -> Match:
-    logging.debug(f"Saving result: {result}, submissions: {submissions}")
+    logger.debug(f"Saving result: submissions: {submissions}, result: {result}")
     submission_ids = [submission.id for submission in submissions]
     if not len(submission_ids) == len(result.submission_results):
         raise ValueError("Bad submission ID count")
@@ -255,14 +264,15 @@ def _run_match(gamemode: gamemodes.Gamemode, options, submissions: List[Submissi
 
 
 def _run_typical_match(gamemode: gamemodes.Gamemode, options) -> bool:
+    logger.debug("Starting typical match")
+
     # Get n sumbissions
     submissions = []
     if gamemode.players > 0:
         newest = _get_all_latest_healthy_submissions()
-        logging.debug(f"===== Got some typical submissions. players: {gamemode.players}, fetched: {len(newest)} =====")
         if len(newest) < gamemode.players:
             return False
-        submissions = random.choices(newest, k=gamemode.players)
+        submissions = random.sample(newest, k=gamemode.players)
 
     # Run & parse
     result = _run_match(gamemode, options, submissions)
@@ -275,6 +285,8 @@ def _run_typical_match(gamemode: gamemodes.Gamemode, options) -> bool:
 
 
 def _run_test_match(gamemode: gamemodes.Gamemode, options) -> bool:
+    logger.debug("Starting test match")
+
     # Get n sumbissions
     submissions = []
     if gamemode.players > 0:
@@ -301,21 +313,27 @@ class Matchmaker(Thread):
         self.seconds_per_run = seconds_per_run
         self.daemon = True
 
+    def _run_one(self) -> bool:
+        try:
+            if self.testing:
+                return _run_test_match(self.gamemode, self.options)
+            else:
+                return _run_typical_match(self.gamemode, self.options)
+        except Exception as e:
+            logger.exception(e)
+            return False
+
     def run(self) -> None:
         if self.gamemode.players < 1:
             return
 
         while True:
             start = time.process_time_ns()
-            if self.testing:
-                success = _run_test_match(self.gamemode, self.options)
-            else:
-                logging.debug("===== Starting a typical simulation run =====")
-                success = _run_typical_match(self.gamemode, self.options)
-                logging.debug(f"===== Finished a typical simulation run. successful: {success} =====")
+            success = self._run_one()
             diff = (time.process_time_ns() - start) / 1e9
 
             if not success:
-                time.sleep(random.randint(1, 2 * self.seconds_per_run))  # Pause for a while on failure
+                time.sleep(random.randint(1, 2 * max(1, self.seconds_per_run)))  # Pause for a while on failure
 
-            time.sleep(self.seconds_per_run - diff)
+            wait_time = max(0.0, self.seconds_per_run - diff)
+            time.sleep(wait_time)
