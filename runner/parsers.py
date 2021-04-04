@@ -103,6 +103,7 @@ def chess_parser(messages: Iterator[Message]):
                 outcome_txt = message.data["reason"]
                 break
             elif result_type == "missing_function":
+                loser = player_turn
                 healths[player_turn] = False
                 outcome_txt = "broken-entry-point"
             else:
@@ -110,6 +111,12 @@ def chess_parser(messages: Iterator[Message]):
                 healths = [False, False]
                 outcome_txt = "unknown-result-type"
                 break
+
+    # If a player was in control of the game and the game ended, that player probably caused a crash
+    if controller != -1:
+        healths[controller] = False
+        outcome_txt = "game-unfinished"
+        loser = controller
 
     host_prints = "\n".join(prints[0])
     player_prints = ["\n".join(prints[1]), "\n".join(prints[2])]

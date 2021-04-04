@@ -298,6 +298,10 @@ def _run_test_match(gamemode: gamemodes.Gamemode, options) -> bool:
     # Run & parse
     result = _run_match(gamemode, options, submissions)
 
+    # If one was unhealthy, they both were
+    if False in result.healths:
+        result.healths = [False] * len(result.healths)
+
     # Record successes and failures
     _save_result(submissions, result, False)
 
