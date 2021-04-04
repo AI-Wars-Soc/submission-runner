@@ -30,10 +30,10 @@ services:
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_CPU_COUNT: 0.5
       DATABASE_CONNECTION: "postgresql://debug:debug@database"
-      SCORE_TURBULENCE_MILLIS: 100
+      SCORE_TURBULENCE_MILLIS: 2000
       INITIAL_SCORE: 1000
       GAMEMODE: chess
-      MATCHMAKERS: 2
+      MATCHMAKERS: 10
       GAME_OPTIONS: '{}'
       SECONDS_PER_RUN: 20
     depends_on:

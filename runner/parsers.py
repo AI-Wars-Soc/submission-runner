@@ -18,12 +18,36 @@ class SingleResult(dict):
 class ParsedResult(dict):
     def __init__(self, recording, submission_results: List[SingleResult]):
         self.recording = str(recording)
-        self.outcomes = [r.outcome for r in submission_results]
-        self.healths = [r.healthy for r in submission_results]
-        self.player_ids = [r.player_id for r in submission_results]
         self.submission_results = submission_results
 
         super().__init__(recording=recording, submission_results=submission_results)
+
+    @property
+    def outcomes(self):
+        return [r.outcome for r in self.submission_results]
+
+    @outcomes.setter
+    def outcomes(self, values):
+        for value, result in zip(values, self.submission_results):
+            result.outcome = value
+
+    @property
+    def healths(self):
+        return [r.healthy for r in self.submission_results]
+
+    @healths.setter
+    def healths(self, values):
+        for value, result in zip(values, self.submission_results):
+            result.healthy = value
+
+    @property
+    def player_ids(self):
+        return [r.player_id for r in self.submission_results]
+
+    @player_ids.setter
+    def player_ids(self, values):
+        for value, result in zip(values, self.submission_results):
+            result.player_id = value
 
 
 def none_parser(messages: Iterator[Message]) -> ParsedResult:

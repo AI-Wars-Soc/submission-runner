@@ -5,9 +5,10 @@ import random
 import time
 from datetime import datetime, timezone
 from threading import Thread
-from typing import List
+from typing import List, Tuple
 
 import cuwais
+import numpy
 from cuwais.common import Outcome
 from cuwais.database import Submission, Result, Match
 from sqlalchemy import func, and_
@@ -18,14 +19,17 @@ from runner.parsers import ParsedResult, SingleResult
 logger = logging.getLogger(__name__)
 
 
-def _get_all_latest_healthy_submissions() -> List[Submission]:
+def _get_all_latest_healthy_submissions() -> List[Tuple[Submission, float]]:
+    """Gets a list of submissions along with their healths from 1 to 0.
+    Submissions with health 0 are omitted as they should not be run"""
     with cuwais.database.create_session() as database_session:
-        # All submissions with at least one healthy result
         healthy_subq = database_session.query(
-            Submission.id
-        ).group_by(Submission.id)\
+            Submission.id,
+            func.count(Result.id).label('healthies')
+        ).join(Submission.results)\
+            .group_by(Submission.id)\
             .filter(Result.healthy == True)\
-            .subquery('t1')
+            .subquery()
 
         most_recent_subq = database_session.query(
             Submission.user_id,
@@ -37,9 +41,30 @@ def _get_all_latest_healthy_submissions() -> List[Submission]:
             )
         ).group_by(Submission.user_id)\
             .filter(Submission.active == True)\
-            .subquery('t2')
+            .subquery()
 
-        res = database_session.query(Submission).join(
+        total_results_subq = database_session.query(
+            Submission.id,
+            func.count(Result.id).label('total')
+        ).join(Submission.results)\
+            .group_by(Submission.id)\
+            .subquery()
+
+        res = database_session.query(
+            Submission,
+            healthy_subq.c.healthies,
+            total_results_subq.c.total
+        ).join(
+            healthy_subq,
+            and_(
+                Submission.id == healthy_subq.c.id
+            )
+        ).join(
+            total_results_subq,
+            and_(
+                Submission.id == total_results_subq.c.id
+            )
+        ).join(
             most_recent_subq,
             and_(
                 Submission.user_id == most_recent_subq.c.user_id,
@@ -47,7 +72,7 @@ def _get_all_latest_healthy_submissions() -> List[Submission]:
             )
         ).all()
 
-    return res
+    return [(sub, h/t) for sub, h, t in res]
 
 
 def _get_all_untested_submissions() -> List[Submission]:
@@ -163,7 +188,7 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
         elif result.outcome == Outcome.Loss:
             delta = -win_loss - loss_draw
             delta /= counts[Outcome.Loss]
-        else: # result.outcome == Outcome.Draw
+        else:  # result.outcome == Outcome.Draw
             delta = loss_draw - win_draw
             delta /= counts[Outcome.Draw]
 
@@ -272,7 +297,13 @@ def _run_typical_match(gamemode: gamemodes.Gamemode, options) -> bool:
         newest = _get_all_latest_healthy_submissions()
         if len(newest) < gamemode.players:
             return False
-        submissions = random.sample(newest, k=gamemode.players)
+        newest_submissions = [submission for submission, _ in newest]
+        healths = numpy.array([health for _, health in newest])
+        logger.debug(f"Got newest submissions {newest_submissions}, with healths {healths}")
+        healths *= (1 / numpy.sum(healths))
+        i_submissions = numpy.random.choice(len(newest_submissions), size=gamemode.players, replace=False, p=healths)
+        for i in i_submissions:
+            submissions.append(newest_submissions[i])
 
     # Run & parse
     result = _run_match(gamemode, options, submissions)
@@ -298,7 +329,7 @@ def _run_test_match(gamemode: gamemodes.Gamemode, options) -> bool:
     # Run & parse
     result = _run_match(gamemode, options, submissions)
 
-    # If one was unhealthy, they both were
+    # If one was unhealthy, they all were
     if False in result.healths:
         result.healths = [False] * len(result.healths)
 
@@ -339,5 +370,6 @@ class Matchmaker(Thread):
             if not success:
                 time.sleep(random.randint(1, 2 * max(1, self.seconds_per_run)))  # Pause for a while on failure
 
-            wait_time = max(0.0, self.seconds_per_run - diff)
+            jitter = 0.1 * self.seconds_per_run * (random.random() - 0.5)  # Pause for a while so we're not in sync
+            wait_time = max(0.0, self.seconds_per_run - diff + jitter)
             time.sleep(wait_time)
