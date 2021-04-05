@@ -17,16 +17,16 @@ services:
         source: "./shared"
         target: "/exec/shared"
         read_only: true
-      - "./tmp/repositories:/repositories"
+      - "repositories:/repositories"
     networks:
       - database
     ports:
       - "5000:8080"
     environment:
       DEBUG: "True"
-      SANDBOX_COMMAND_TIMEOUT: 15s
-      SANDBOX_CONTAINER_TIMEOUT: 15s
-      SANDBOX_PARSER_TIMEOUT: 10
+      SANDBOX_COMMAND_TIMEOUT: 25s
+      SANDBOX_CONTAINER_TIMEOUT: 25s
+      SANDBOX_PARSER_TIMEOUT: 20
       SANDBOX_MEM_LIMIT: 256m
       SANDBOX_CPU_COUNT: 0.5
       DATABASE_CONNECTION: "postgresql://debug:debug@database"
@@ -34,7 +34,7 @@ services:
       INITIAL_SCORE: 1000
       GAMEMODE: chess
       MATCHMAKERS: 10
-      GAME_OPTIONS: '{}'
+      GAME_OPTIONS: '{"chess960": true}'
       SECONDS_PER_RUN: 20
     depends_on:
       - database
@@ -45,7 +45,7 @@ services:
       - "80:8080"
     volumes:
       - "../front-end/server:/home/web_user/server"
-      - "./tmp/repositories:/repositories"
+      - "repositories:/repositories"
     networks:
       - redis
       - database
@@ -94,3 +94,5 @@ networks:
 secrets:
   secret_key:
     file: ./debug_secret.txt
+volumes:
+  repositories:

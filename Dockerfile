@@ -20,4 +20,8 @@ ENV PYTHONPATH="/exec:${PYTHONPATH}"
 RUN chown -R 1429 /exec/sandbox
 RUN chown -R 1429 /exec/shared
 
+# Set up repository permissions
+RUN mkdir /repositories
+# RUN chown -R 1429 /repositories
+
 CMD [ "bash", "/exec/runner/run.sh" ]
