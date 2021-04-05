@@ -2,21 +2,9 @@ version: "3.7"
 services:
   submission-runner:
     build: ./
-    image: aiwarsoc/submission-runner:debug
+    image: aiwarssoc/submission-runner:debug
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - type: bind
-        source: "./runner"
-        target: "/exec/runner"
-        read_only: true
-      - type: bind
-        source: "./sandbox"
-        target: "/exec/sandbox"
-        read_only: true
-      - type: bind
-        source: "./shared"
-        target: "/exec/shared"
-        read_only: true
       - "repositories:/repositories"
     networks:
       - database
@@ -44,7 +32,6 @@ services:
     ports:
       - "80:8080"
     volumes:
-      - "../front-end/server:/home/web_user/server"
       - "repositories:/repositories"
     networks:
       - redis
