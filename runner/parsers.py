@@ -1,3 +1,4 @@
+import json
 from typing import Iterator, List, Callable
 
 import chess
@@ -16,8 +17,9 @@ class SingleResult(dict):
 
 
 class ParsedResult(dict):
-    def __init__(self, recording, submission_results: List[SingleResult]):
-        self.recording = str(recording)
+    def __init__(self, recording: dict, submission_results: List[SingleResult]):
+        recording["outcome_txt"] = recording.get("outcome_txt", "unknown")
+        self.recording = json.dumps(recording)
         self.submission_results = submission_results
 
         super().__init__(recording=recording, submission_results=submission_results)
@@ -48,10 +50,6 @@ class ParsedResult(dict):
     def player_ids(self, values):
         for value, result in zip(values, self.submission_results):
             result.player_id = value
-
-
-def none_parser(messages: Iterator[Message]) -> ParsedResult:
-    return ParsedResult(list(messages), [])
 
 
 def default_parser(messages: Iterator[Message]):
@@ -167,8 +165,6 @@ def chess_parser(messages: Iterator[Message]):
 
 
 def get(parser) -> Callable[[Iterator[Message]], ParsedResult]:
-    if parser == "none":
-        return none_parser
     if parser == "chess":
         return chess_parser
 

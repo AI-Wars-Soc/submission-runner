@@ -5,7 +5,19 @@ services:
     image: aiwarssoc/submission-runner:debug
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "repositories:/repositories"
+      - type: bind
+        source: "./runner"
+        target: "/exec/runner"
+        read_only: true
+      - type: bind
+        source: "./sandbox"
+        target: "/exec/sandbox"
+        read_only: true
+      - type: bind
+        source: "./shared"
+        target: "/exec/shared"
+        read_only: true
+      - "./tmp/repositories:/repositories"
     networks:
       - database
     ports:
@@ -32,7 +44,8 @@ services:
     ports:
       - "80:8080"
     volumes:
-      - "repositories:/repositories"
+      - "../front-end/server:/home/web_user/server"
+      - "./tmp/repositories:/repositories"
     networks:
       - redis
       - database
@@ -81,5 +94,3 @@ networks:
 secrets:
   secret_key:
     file: ./debug_secret.txt
-volumes:
-  repositories:
