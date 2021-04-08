@@ -19,6 +19,8 @@ class SingleResult(dict):
 class ParsedResult(dict):
     def __init__(self, recording: dict, submission_results: List[SingleResult]):
         recording["outcome_txt"] = recording.get("outcome_txt", "unknown")
+        recording["player_prints"] = recording.get("player_prints", [])
+        recording["player_prints"] = [[p[:1000] for p in player[:100]] for player in recording["player_prints"]]
         self.recording = json.dumps(recording)
         self.submission_results = submission_results
 
@@ -80,7 +82,7 @@ def chess_parser(messages: Iterator[Message]):
     board = None
     loser = -1
     healths = [True, True]
-    outcome_txt = ""
+    outcome_txt = None
 
     for message in messages:
         if message.message_type == MessageType.PRINT:
@@ -133,9 +135,22 @@ def chess_parser(messages: Iterator[Message]):
                 healths = [False, False]
                 outcome_txt = "unknown-result-type"
                 break
+        elif message.message_type in Message.ERROR_TYPES:
+            loser = controller
+            if controller >= 0:
+                healths[controller] = False
+            outcome_txt = {MessageType.ERROR_PROCESS_TIMEOUT: "timeout",
+                           MessageType.ERROR_INVALID_MESSAGE_TYPE: "invalid-message-type",
+                           MessageType.ERROR_INVALID_ATTACHED_KEY: "invalid-attached-key",
+                           MessageType.ERROR_INVALID_ENTRY_FILE: "invalid-entry-file",
+                           MessageType.ERROR_INVALID_NEW_KEY: "invalid-new-key",
+                           MessageType.ERROR_INVALID_SUBMISSION: "invalid-submission",
+                           MessageType.ERROR_PROCESS_KILLED: "process-killed",
+                           }[message.message_type]
+            break
 
     # If a player was in control of the game and the game ended, that player probably caused a crash
-    if controller != -1:
+    if controller != -1 and outcome_txt is None:
         healths[controller] = False
         outcome_txt = "game-unfinished"
         loser = controller
