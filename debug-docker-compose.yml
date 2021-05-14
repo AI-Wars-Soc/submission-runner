@@ -1,28 +1,48 @@
 version: "3.7"
 services:
+  submission-runner-docker:
+    image: docker:dind
+    privileged: true
+    expose:
+      - "2376"
+    volumes:
+      - "submission-runner-docker-certs:/certs/client"
+      - "submission-runner-dind-data:/var/lib/docker"
+    networks:
+      submission-runner:
+        aliases:
+          - docker
+    environment:
+      - "DOCKER_TLS_CERTDIR=/certs"
+    restart: unless-stopped
+    init: true
   submission-runner:
     build: ./
     image: aiwarssoc/submission-runner:debug
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
       - type: bind
         source: "./runner"
-        target: "/exec/runner"
+        target: "/home/subrunner/runner"
         read_only: true
       - type: bind
         source: "./sandbox"
-        target: "/exec/sandbox"
+        target: "/home/subrunner/sandbox"
         read_only: true
       - type: bind
         source: "./shared"
-        target: "/exec/shared"
+        target: "/home/subrunner/shared"
         read_only: true
       - "./tmp/repositories:/repositories"
+      - "submission-runner-docker-certs:/certs/client:ro"
     networks:
       - database
+      - submission-runner
     ports:
       - "5000:8080"
     environment:
+      DOCKER_HOST: "tcp://docker:2376"
+      DOCKER_CERT_PATH: "/certs/client"
+      DOCKER_TLS_VERIFY: 1
       DEBUG: "True"
       SANDBOX_COMMAND_TIMEOUT: 25s
       SANDBOX_CONTAINER_TIMEOUT: 25s
@@ -33,11 +53,13 @@ services:
       SCORE_TURBULENCE_MILLIS: 2000
       INITIAL_SCORE: 1000
       GAMEMODE: chess
-      MATCHMAKERS: 10
+      MATCHMAKERS: 1
       GAME_OPTIONS: '{"chess960": true}'
       SECONDS_PER_RUN: 20
     depends_on:
       - database
+      - submission-runner-docker
+    init: true
   web-server:
     build: ../front-end
     image: aiwarssoc/front-end:debug
@@ -91,6 +113,10 @@ services:
 networks:
   redis:
   database:
+  submission-runner:
 secrets:
   secret_key:
     file: ./debug_secret.txt
+volumes:
+  submission-runner-docker-certs:
+  submission-runner-dind-data:

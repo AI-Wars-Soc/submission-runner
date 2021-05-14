@@ -89,6 +89,7 @@ class TimedContainer:
                                       cpu_quota=int(100000 * float(env_vars['SANDBOX_CPU_COUNT'])),
                                       tty=True,
                                       network_mode='none',
+                                      cap_drop=["ALL"],
                                       # read_only=True,  # marks all volumes as read only, just in case
                                       environment=env_vars,
                                       command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
@@ -101,8 +102,8 @@ class TimedContainer:
     @staticmethod
     def _compress_sandbox_files(fh):
         with tarfile.open(fileobj=fh, mode='w') as tar:
-            tar.add("/exec/sandbox", arcname="sandbox")
-            tar.add("/exec/shared", arcname="shared")
+            tar.add("sandbox", arcname="sandbox")
+            tar.add("shared", arcname="shared")
 
     def _copy_sandbox_scripts(self):
         with io.BytesIO() as fh:
@@ -154,7 +155,7 @@ class TimedContainer:
     @staticmethod
     def _is_script_valid(script_name: str):
         script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-        return os.path.exists("/exec/sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+        return os.path.exists("sandbox/" + script_name) and script_name_rex.match(script_name) is not None
 
     def _run_unfiltered(self, script_name: str, extra_args: dict) -> Iterator[Message]:
         if extra_args is None:

@@ -76,8 +76,8 @@ def default_parser(messages: Iterator[Message]):
 
 def chess_parser(messages: Iterator[Message]):
     prints = ([], [], [])
-    moves = []
     controller = -1  # -1 for host, 0 for player 0, 1 for player 1
+    moves = []
     initial_state = None
     board = None
     loser = -1
@@ -150,10 +150,11 @@ def chess_parser(messages: Iterator[Message]):
             break
 
     # If a player was in control of the game and the game ended, that player probably caused a crash
-    if controller != -1 and outcome_txt is None:
-        healths[controller] = False
+    if outcome_txt is None:
         outcome_txt = "game-unfinished"
-        loser = controller
+        if controller != -1:
+            healths[controller] = False
+            loser = controller
 
     host_prints = "\n".join(prints[0])
     player_prints = ["\n".join(prints[1]), "\n".join(prints[2])]
