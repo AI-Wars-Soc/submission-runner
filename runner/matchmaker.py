@@ -1,6 +1,5 @@
 import logging
 import math
-import os
 import random
 import time
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from typing import List, Tuple
 import cuwais
 import numpy
 from cuwais.common import Outcome
+from cuwais.config import config_file
 from cuwais.database import Submission, Result, Match
 from sqlalchemy import func, and_
 
@@ -93,7 +93,7 @@ def _calculate_delta_scores_pair(a_score, b_score, winner_weight):
     Winner weight is the expected amount that player 1 will win from the given game,
     I.e. 1 for a win-loss situation, 0.5 for a draw/stalemate
     """
-    k = int(os.getenv("SCORE_TURBULENCE_MILLIS")) / 1000.0
+    k = float(config_file.get("score_turbulence"))
 
     a_rating = 10 ** (a_score / 400)
     b_rating = 10 ** (b_score / 400)
@@ -222,7 +222,7 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
 
 
 def _get_elos(submission_ids: list):
-    init = float(os.getenv("INITIAL_SCORE"))
+    init = float(config_file.get("initial_score"))
 
     with cuwais.database.create_session() as database_session:
         subq = database_session.query(

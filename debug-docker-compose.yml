@@ -20,20 +20,12 @@ services:
     build: ./
     image: aiwarssoc/submission-runner:debug
     volumes:
-      - type: bind
-        source: "./runner"
-        target: "/home/subrunner/runner"
-        read_only: true
-      - type: bind
-        source: "./sandbox"
-        target: "/home/subrunner/sandbox"
-        read_only: true
-      - type: bind
-        source: "./shared"
-        target: "/home/subrunner/shared"
-        read_only: true
+      - "./runner:/home/subrunner/runner"
+      - "./sandbox:/home/subrunner/sandbox"
+      - "./shared:/home/subrunner/shared"
       - "./tmp/repositories:/repositories"
       - "submission-runner-docker-certs:/certs/client:ro"
+      - "./debug_config.yml:/home/subrunner/runner/config.yml:ro"
     networks:
       - database
       - submission-runner
@@ -43,19 +35,6 @@ services:
       DOCKER_HOST: "tcp://docker:2376"
       DOCKER_CERT_PATH: "/certs/client"
       DOCKER_TLS_VERIFY: 1
-      DEBUG: "True"
-      SANDBOX_COMMAND_TIMEOUT: 25s
-      SANDBOX_CONTAINER_TIMEOUT: 25s
-      SANDBOX_PARSER_TIMEOUT: 20
-      SANDBOX_MEM_LIMIT: 256m
-      SANDBOX_CPU_COUNT: 0.5
-      DATABASE_CONNECTION: "postgresql://debug:debug@database"
-      SCORE_TURBULENCE_MILLIS: 2000
-      INITIAL_SCORE: 1000
-      GAMEMODE: chess
-      MATCHMAKERS: 1
-      GAME_OPTIONS: '{"chess960": true}'
-      SECONDS_PER_RUN: 20
     depends_on:
       - database
       - submission-runner-docker
@@ -68,16 +47,10 @@ services:
     volumes:
       - "../front-end/server:/home/web_user/server"
       - "./tmp/repositories:/repositories"
+      - "./debug_config.yml:/home/web_user/server/config.yml:ro"
     networks:
       - redis
       - database
-    environment:
-      DEBUG: "True"
-      SERVER_NAME: "lvh.me"
-      CLIENT_ID: "389788965612-qh4j3n7fh14nfjbg7u1tmlb59mudmobj.apps.googleusercontent.com"
-      DATABASE_CONNECTION: "postgresql://debug:debug@database"
-      MAX_REPO_SIZE_BYTES: 10000000
-      INITIAL_SCORE: 1000
     secrets:
       - secret_key
     depends_on:

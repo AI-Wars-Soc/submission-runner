@@ -1,7 +1,7 @@
 import cuwais.database
 import flask
+from cuwais.config import config_file
 from flask import request, Response
-import os
 import json
 
 from runner import sandbox, gamemodes
@@ -10,9 +10,9 @@ import logging
 from runner.matchmaker import Matchmaker
 
 app = flask.Flask(__name__)
-app.config["DEBUG"] = os.getenv('DEBUG') == 'True'
+app.config["DEBUG"] = config_file.get("debug")
 
-logging.basicConfig(level=logging.DEBUG if os.getenv('DEBUG') else logging.WARNING)
+logging.basicConfig(level=logging.DEBUG if app.config["DEBUG"] else logging.WARNING)
 
 
 @app.route('/run', methods=['GET'])
@@ -38,12 +38,12 @@ def run():
     return Response(json.dumps(parsed), status=200, mimetype='application/json')
 
 
-if __name__ == "__main__":
+def main():
     # Get some options
-    gamemode = gamemodes.Gamemode.get(os.getenv("GAMEMODE").lower())
-    options = json.loads(os.getenv("GAME_OPTIONS"))
-    matchmakers = int(os.getenv("MATCHMAKERS"))
-    seconds_per_run = int(os.getenv("SECONDS_PER_RUN"))
+    gamemode = gamemodes.Gamemode.get(config_file.get("gamemode.id").lower())
+    options = config_file.get("gamemode.options")
+    matchmakers = int(config_file.get("submission_runner.matchmakers"))
+    seconds_per_run = int(config_file.get("submission_runner.target_seconds_per_game"))
 
     # Set up database
     cuwais.database.create_tables()
@@ -59,3 +59,7 @@ if __name__ == "__main__":
     else:
         from waitress import serve
         serve(app, host="0.0.0.0", port=8080)
+
+
+if __name__ == "__main__":
+    main()

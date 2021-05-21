@@ -1,0 +1,18 @@
+db_connection: "postgresql://debug:debug@database"
+debug: false
+profile: false
+initial_score: 1000
+score_turbulence: 0.5
+submission_runner:
+  host_parser_timeout_seconds: 20
+  target_seconds_per_game: 10
+  sandbox_unrun_timeout_seconds: 25
+  sandbox_run_timeout_seconds: 25
+  sandbox_memory_limit: 256m
+  sandbox_cpu_count: 0.5
+  matchmakers: 6
+gamemode:
+  id: chess
+  options:
+    chess960: true
+localisation:

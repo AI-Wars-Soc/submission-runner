@@ -9,6 +9,7 @@ import os
 import re
 
 import requests
+from cuwais.config import config_file
 from docker.models.containers import Container
 
 from runner import gamemodes
@@ -34,6 +35,7 @@ class TimedContainer:
 
     def __init__(self, timeout):
         self.timeout = timeout
+        self.running_files = {}
 
         # Create container
         self._env_vars = TimedContainer._get_env_vars()
@@ -66,27 +68,26 @@ class TimedContainer:
 
     @staticmethod
     def _get_env_vars() -> dict:
-        var_names = ['SANDBOX_COMMAND_TIMEOUT', 'SANDBOX_CONTAINER_TIMEOUT',
-                     'SANDBOX_MEM_LIMIT', 'SANDBOX_CPU_COUNT']
-        env_vars = {name: str(os.getenv(name)) for name in var_names}
+        env_vars = dict()
+        unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
+        run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
+        env_vars['SANDBOX_COMMAND_TIMEOUT'] = f"{unrun_t}s"
+        env_vars['SANDBOX_CONTAINER_TIMEOUT'] = f"{run_t}s"
         env_vars['PYTHONPATH'] = "/home/sandbox/"
-
-        unset = list(filter(lambda v: env_vars[v] is None, env_vars.keys()))
-        if len(unset) != 0:
-            error = f"Required environment variables are unset {str(unset)}"
-            raise MissingEnvVarsError(error)
 
         return env_vars
 
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
+        mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
+        cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
         return _client.containers.run("aiwarssoc/sandbox",
                                       detach=True,
                                       remove=True,
-                                      mem_limit=env_vars['SANDBOX_MEM_LIMIT'],
-                                      memswap_limit=env_vars['SANDBOX_MEM_LIMIT'],
+                                      mem_limit=mem_limit,
+                                      memswap_limit=mem_limit,
                                       cpu_period=100000,
-                                      cpu_quota=int(100000 * float(env_vars['SANDBOX_CPU_COUNT'])),
+                                      cpu_quota=cpu_quota,
                                       tty=True,
                                       network_mode='none',
                                       cap_drop=["ALL"],
@@ -95,15 +96,15 @@ class TimedContainer:
                                       command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
                                       user='sandbox',
                                       tmpfs={
-                                          '/tmp': 'size=64M,uid=1000',
-                                          '/var/tmp': 'size=64M,uid=1001'
+                                          '/tmp': 'size=64M',
+                                          '/var/tmp': 'size=64M'
                                       })
 
     @staticmethod
     def _compress_sandbox_files(fh):
         with tarfile.open(fileobj=fh, mode='w') as tar:
-            tar.add("sandbox", arcname="sandbox")
-            tar.add("shared", arcname="shared")
+            tar.add("../sandbox", arcname="sandbox")
+            tar.add("../shared", arcname="shared")
 
     def _copy_sandbox_scripts(self):
         with io.BytesIO() as fh:
@@ -155,7 +156,7 @@ class TimedContainer:
     @staticmethod
     def _is_script_valid(script_name: str):
         script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-        return os.path.exists("sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+        return os.path.exists("../sandbox/" + script_name) and script_name_rex.match(script_name) is not None
 
     def _run_unfiltered(self, script_name: str, extra_args: dict) -> Iterator[Message]:
         if extra_args is None:
@@ -231,7 +232,7 @@ def run_in_sandbox(gamemode: gamemodes.Gamemode, submission_hashes=None, options
 
     option_args = gamemode.create_env_vars(**options)
 
-    timeout = int(os.getenv('SANDBOX_PARSER_TIMEOUT'))
+    timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
     with TimedContainer(timeout) as container:
         for i, submission_hash in enumerate(submission_hashes):
             subdir = f"submission{i + 1}"

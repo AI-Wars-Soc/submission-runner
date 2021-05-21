@@ -4,7 +4,7 @@ FROM docker
 # Install python
 RUN apk add --update --no-cache python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers && ln -sf python3 /usr/bin/python
 RUN python3 -m ensurepip
-RUN pip3 install --no-cache --upgrade pip setuptools wheel
+RUN pip3 install --no-cache --upgrade pip setuptools wheel numpy
 
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
@@ -18,7 +18,7 @@ VOLUME ["/tmp/sandbox"]
 COPY runner ./runner
 COPY sandbox ./sandbox
 COPY shared ./shared
-ENV PYTHONPATH="/exec:${PYTHONPATH}"
+ENV PYTHONPATH="/home/subrunner:/home/subrunner/runner:${PYTHONPATH}"
 
 # Set up repositories
 RUN mkdir /repositories
@@ -26,6 +26,7 @@ RUN chown -R subrunner /repositories
 RUN chmod u+rw /repositories
 
 # Set user
+WORKDIR /home/subrunner/runner
 USER subrunner
 
-CMD [ "bash", "/home/subrunner/runner/run.sh" ]
+CMD [ "bash", "run.sh" ]
