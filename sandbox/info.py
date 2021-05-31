@@ -55,6 +55,30 @@ def get_system_info():
         return e
 
 
+def write_until_full(path):
+    mega = "a" * 1024 * 1024
+    written = 0
+    try:
+        with open(path, "w") as f:
+            for i in range(128):
+                f.write(mega)
+                f.flush()
+                written += 1024 * 1024
+    except PermissionError:
+        return "Not writable"
+    except IOError as e:
+        print(e)
+        return f"{written / (1024 * 1024)}MB"
+    except Exception as e:
+        return str(e)
+    finally:
+        try:
+            os.remove(path)
+        except Exception as e:
+            pass
+    return "No Limit"
+
+
 def numpy_speed_test():
     np_results = {}
 
@@ -62,7 +86,7 @@ def numpy_speed_test():
     # Let's take the randomness out of random numbers (for reproducibility)
     np.random.seed(0)
 
-    size = 512
+    size = 256
     A, B = np.random.random((size, size)), np.random.random((size, size))
     C, D = np.random.random((size * 128,)), np.random.random((size * 128,))
     E = np.random.random((int(size / 2), int(size / 4)))
@@ -115,13 +139,28 @@ def numpy_speed_test():
     return np_results
 
 
+def starts_with_one(s: str, ls):
+    for l in ls:
+        if s.startswith(l):
+            return True
+    return False
+
+
 print("Start Print")
 sender = Sender()
+all_writable = get_all_writable()
+writable_dirs = [path for path in all_writable if os.path.isdir(path)]
+writable_files = [path for path in all_writable if os.path.isfile(path)]
+writable_others = [path for path in all_writable if (not os.path.isdir(path)) and (not os.path.isfile(path))]
 results = {"has_internet": connect('http://google.com'),
            "hostname_uses_loopback": hostname_uses_loopback(),
            "dirs": {path: {"readable": readable(path), "writable": writable(path)}
                     for path in ["/", "/home", "/home/sandbox/", "~/", "./", "/var/tmp", "/tmp"]},
-           "all_writables": get_all_writable(),
+           "all_writable_files": writable_files,
+           "all_writable_dirs": writable_dirs,
+           "all_writable_dirs_sizes": {path: write_until_full(path + "/test.txt")
+                                       for path in writable_dirs},
+           "all_writable_others": writable_others,
            "system": get_system_info(),
            "user": {"uid": os.getuid()},
            "process": {"cwd": os.getcwd(), "pid": os.getpid()},

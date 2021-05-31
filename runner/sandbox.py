@@ -35,7 +35,6 @@ class TimedContainer:
 
     def __init__(self, timeout):
         self.timeout = timeout
-        self.running_files = {}
 
         # Create container
         self._env_vars = TimedContainer._get_env_vars()
@@ -80,6 +79,7 @@ class TimedContainer:
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
+        disk_limit = str(int(config_file.get("submission_runner.sandbox_disk_limit_megabytes"))) + "M"
         cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
         return _client.containers.run("aiwarssoc/sandbox",
                                       detach=True,
@@ -96,8 +96,10 @@ class TimedContainer:
                                       command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
                                       user='sandbox',
                                       tmpfs={
-                                          '/tmp': 'size=64M',
-                                          '/var/tmp': 'size=64M'
+                                          '/tmp': f'size={disk_limit}',
+                                          '/var/tmp': f'size={disk_limit}',
+                                          '/run/lock': f'size=1M',
+                                          '/var/lock': f'size=1M'
                                       })
 
     @staticmethod
@@ -114,9 +116,10 @@ class TimedContainer:
             # Send
             self._container.put_archive("/home/sandbox/", fh.getvalue())
 
-        # Fix ownership
-        self._container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
-        self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
+    def _lock_down(self):
+        # Set write limits
+        print(str(self._container.exec_run("chown -hvR root /home/sandbox/", user="root").output.decode()), flush=True)
+        print(str(self._container.exec_run("chmod -R ugo-w /home/sandbox/", user="root").output.decode()), flush=True)
 
     def _error(self, message_type: MessageType, **kwargs) -> Message:
         data = dict({'identifier': str(self)}, **kwargs)
@@ -166,6 +169,9 @@ class TimedContainer:
         if not TimedContainer._is_script_valid(script_name):
             yield self._error(MessageType.ERROR_INVALID_ENTRY_FILE)
             return
+
+        # Lock down the container
+        self._lock_down()
 
         # Get env vars
         env_vars = {**self._env_vars, **extra_args}

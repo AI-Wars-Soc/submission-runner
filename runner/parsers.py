@@ -68,7 +68,7 @@ def default_parser(messages: Iterator[Message]):
             end = message
 
     prints = "\n".join(prints)
-    end = dict(end)
+    end = None if end is None else dict(end)
 
     record = {"printed": prints, "results": results, "end": end}
     return ParsedResult(record, [])

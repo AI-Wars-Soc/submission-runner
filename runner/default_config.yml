@@ -9,6 +9,7 @@ submission_runner:
   sandbox_unrun_timeout_seconds: 25
   sandbox_run_timeout_seconds: 25
   sandbox_memory_limit: 256m
+  sandbox_disk_limit_megabytes: 64
   sandbox_cpu_count: 0.5
   matchmakers: 6
 gamemode:
