@@ -284,7 +284,7 @@ def _save_result(submissions: List[Submission],
 
 def _run_match(gamemode: gamemodes.Gamemode, options, submissions: List[Submission]):
     submission_hashes = [submission.files_hash for submission in submissions]
-    messages = sandbox.run_in_sandbox(gamemode, submission_hashes, options)
+    messages = gamemode.run(submission_hashes, options)
     return gamemode.parse(messages)
 
 

@@ -1,9 +1,10 @@
+import builtins
 import re
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
-from typing import Tuple, Iterator, Set, Union
+from typing import Tuple, Iterator, Set, Union, Callable, Optional, Any
 import collections
 
 
@@ -18,7 +19,6 @@ class MessageType(Enum):
     ERROR_INVALID_NEW_KEY = "ERROR_INVALID_NEW_KEY"
     ERROR_INVALID_ATTACHED_KEY = "ERROR_INVALID_ATTACHED_KEY"
     ERROR_INVALID_MESSAGE_TYPE = "ERROR_INVALID_MESSAGE_TYPE"
-    ERROR_INVALID_ENTRY_FILE = "ERROR_INVALID_ENTRY_FILE"
     ERROR_INVALID_SUBMISSION = "ERROR_INVALID_SUBMISSION"
 
     @staticmethod
@@ -54,7 +54,6 @@ class Message(dict):
                    MessageType.ERROR_INVALID_NEW_KEY,
                    MessageType.ERROR_INVALID_ATTACHED_KEY,
                    MessageType.ERROR_INVALID_MESSAGE_TYPE,
-                   MessageType.ERROR_INVALID_ENTRY_FILE,
                    MessageType.ERROR_INVALID_SUBMISSION}
 
     END_TYPES = {MessageType.END,
@@ -133,8 +132,21 @@ class Message(dict):
         yield from ends
 
 
-class Sender:
+class MessageInputStream:
     def __init__(self):
+        self._receivers = []
+
+    def register_receiver(self, f: Callable[[Message], Any]):
+        self._receivers.append(f)
+
+    def send(self, m: Message):
+        for f in self._receivers:
+            f(m)
+
+
+class Sender:
+    def __init__(self, handler: Callable[[str], None] = lambda x: print(x, flush=True)):
+        self._handler = handler
         self._key = {"code": hex(random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF))}
 
         # Send a new key message
@@ -142,17 +154,30 @@ class Sender:
         self.send(message)
 
     def send(self, message: Message):
-        print(message.to_string(self._key), flush=True)
+        self._handler(message.to_string(self._key))
 
     def send_result(self, data):
         self.send(Message.new_result(data))
 
 
+def input_receiver(input_function=builtins.input) -> Iterator[str]:
+    while True:
+        s = input_function()
+        if s is None or s == "":
+            return
+        yield s
+
+
 class Receiver:
     def __init__(self, lines: Iterator[str]):
         self._lines = lines
+        self._iterator = self._make_messages_iterator()
 
-    def get_messages_iterator(self) -> Iterator[Message]:
+    @property
+    def messages_iterator(self) -> Iterator[Message]:
+        return self._iterator
+
+    def _make_messages_iterator(self) -> Iterator[Message]:
         key = None
 
         for line in self._lines:
@@ -165,6 +190,7 @@ class Receiver:
             # Update key if message told us to
             if message.message_type == MessageType.NEW_KEY:
                 key = message.data
+                continue  # Don't emit
 
             yield message
 

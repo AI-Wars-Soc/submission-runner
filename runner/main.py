@@ -32,8 +32,7 @@ def run():
         if v in options:
             del options[v]
 
-    messages = sandbox.run_in_sandbox(gamemode, submissions, options)
-    parsed = dict(gamemode.parse(messages))
+    parsed = gamemode.run(submissions, options)
 
     return Response(json.dumps(parsed), status=200, mimetype='application/json')
 

@@ -1,21 +1,23 @@
 import io
+import itertools
+import logging
+import os
+import re
 import tarfile
 import threading
+from functools import partial
+from ssl import SSLSocket
+from typing import Iterator, Tuple, Any
 
 import docker
 import docker.errors
 import docker.types.daemon
-import os
-import re
-
+import docker.utils.socket
 import requests
 from cuwais.config import config_file
 from docker.models.containers import Container
 
-from runner import gamemodes
-from shared.messages import MessageType, Message, Receiver
-from typing import Iterator
-import logging
+from shared.messages import MessageType, Message, Receiver, Sender, MessageInputStream
 
 _client = docker.from_env()
 
@@ -33,8 +35,9 @@ class TimedContainer:
     closing with a `ERROR_PROCESS_TIMEOUT` message
     """
 
-    def __init__(self, timeout):
+    def __init__(self, timeout: int, submission_hash: str):
         self.timeout = timeout
+        self.submission_hash = submission_hash
 
         # Create container
         self._env_vars = TimedContainer._get_env_vars()
@@ -42,6 +45,8 @@ class TimedContainer:
 
         # Copy information
         self._copy_sandbox_scripts()
+        self._copy_submission(submission_hash)
+        self._lock_down()
 
         # Create kill thread
         self.stopped = False
@@ -118,8 +123,8 @@ class TimedContainer:
 
     def _lock_down(self):
         # Set write limits
-        print(str(self._container.exec_run("chown -hvR root /home/sandbox/", user="root").output.decode()), flush=True)
-        print(str(self._container.exec_run("chmod -R ugo-w /home/sandbox/", user="root").output.decode()), flush=True)
+        self._container.exec_run("chown -hvR root /home/sandbox/", user="root")
+        self._container.exec_run("chmod -R ugo-w /home/sandbox/", user="root")
 
     def _error(self, message_type: MessageType, **kwargs) -> Message:
         data = dict({'identifier': str(self)}, **kwargs)
@@ -139,12 +144,21 @@ class TimedContainer:
             container.stop()
 
     @staticmethod
-    def _get_lines(strings):
+    def _get_strings(socket: SSLSocket) -> Iterator[str]:
+        for data in iter(partial(socket.recv, 2048), b''):
+            yield str(data.decode())
+
+    @staticmethod
+    def _decode_strings_from_tuples(chunks: Iterator[Tuple[Any, bytes]]) -> Iterator[str]:
+        for chunk in chunks:
+            yield chunk[1].decode()
+
+    @staticmethod
+    def _get_lines(strings: Iterator[str]) -> Iterator[str]:
         line = []
         for string in strings:
-            if string is None or string == "":
+            if string is None or string == b'' or string == "":
                 continue
-            string = str(string.decode())
             for char in string:
                 if char == "\r" or char == "\n":
                     if len(line) != 0:
@@ -161,50 +175,52 @@ class TimedContainer:
         script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
         return os.path.exists("../sandbox/" + script_name) and script_name_rex.match(script_name) is not None
 
-    def _run_unfiltered(self, script_name: str, extra_args: dict) -> Iterator[Message]:
+    def run(self, input_messages: MessageInputStream, extra_args: dict) -> Iterator[Message]:
         if extra_args is None:
             extra_args = dict()
-
-        # Ensure that script is valid
-        if not TimedContainer._is_script_valid(script_name):
-            yield self._error(MessageType.ERROR_INVALID_ENTRY_FILE)
-            return
-
-        # Lock down the container
-        self._lock_down()
 
         # Get env vars
         env_vars = {**self._env_vars, **extra_args}
 
         # Start script
-        run_script_cmd = "./sandbox/run.sh '{path}'".format(path=script_name)
-        (exit_code, stream) = self._container.exec_run(cmd=run_script_cmd,
-                                                       user='sandbox',
-                                                       stream=True,
-                                                       environment=env_vars,
-                                                       workdir="/home/sandbox/")
+        run_script_cmd = "./sandbox/run.sh 'info.py'"
+        socket: SSLSocket
+        _, socket = self._container.exec_run(cmd=run_script_cmd,
+                                             user='sandbox',
+                                             # stream=True,
+                                             socket=True,
+                                             stdin=True,
+                                             tty=False,
+                                             environment=env_vars,
+                                             workdir="/home/sandbox/")
 
-        # Process lines
-        lines = TimedContainer._get_lines(stream)
+        # Set up input to the container
+        def send_handler(m: str):
+            socket.write((m + "\n").encode())
+        sender = Sender(send_handler)
+        input_messages.register_receiver(sender.send)
+
+        # Process output from the container
+        chunks = docker.utils.socket.frames_iter_no_tty(socket)
+        strings = TimedContainer._decode_strings_from_tuples(chunks)
+        lines = TimedContainer._get_lines(strings)
         receiver = Receiver(lines)
-        iterator = receiver.get_messages_iterator()
-        yield from iterator
 
-        yield from self._killed_messages
+        return itertools.chain(receiver.messages_iterator, self._killed_messages)
 
     @staticmethod
     def _is_submission_valid(submission_hash: str, submission_path: str):
         submission_hash_rex = re.compile("^[a-f0-9]+$")
         return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
 
-    def copy_submission(self, submission_hash: str, container_dir: str):
+    def _copy_submission(self, submission_hash: str):
         submission_path = f"/repositories/{submission_hash}.tar"
         # Ensure that submission is valid
         if not TimedContainer._is_submission_valid(submission_hash, submission_path):
             return self._error(MessageType.ERROR_INVALID_SUBMISSION)
 
         # Make destination
-        dest_path = os.path.join("/home/sandbox/sandbox", container_dir)
+        dest_path = "/home/sandbox/submission"
         self._container.exec_run(f"mkdir {dest_path}", user='root')
 
         # Make required init file for python
@@ -215,33 +231,8 @@ class TimedContainer:
             data = f.read()
             self._container.put_archive(dest_path, data)
 
-    def run(self, script_name: str, extra_args=None) -> Iterator[Message]:
-        messages = self._run_unfiltered(script_name, extra_args)
-        yield from Message.filter_middle_ends_to_prints(messages)
-
     def __str__(self):
         return f"TimedContainer<{self._container}>"
 
 
-def run_in_sandbox(gamemode: gamemodes.Gamemode, submission_hashes=None, options=None) -> Iterator[Message]:
-    """runs the given script in a sandbox and returns a result list.
-    Each item in the list is of type 'Message' and is either output from the sandbox
-    or an error while trying to run the sandbox.
-    """
-    script_name = gamemode.script
 
-    if submission_hashes is None:
-        submission_hashes = []
-    if options is None:
-        options = dict()
-    logging.info("Request for script " + script_name)
-
-    option_args = gamemode.create_env_vars(**options)
-
-    timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
-    with TimedContainer(timeout) as container:
-        for i, submission_hash in enumerate(submission_hashes):
-            subdir = f"submission{i + 1}"
-            container.copy_submission(submission_hash, subdir)
-
-        yield from container.run(script_name, option_args)

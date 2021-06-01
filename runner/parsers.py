@@ -1,30 +1,30 @@
 import json
-from typing import Iterator, List, Callable
+from typing import List, Callable
 
-import chess
-from cuwais.common import Outcome
+from cuwais.common import Outcome, Result
 
-from shared.messages import Message, MessageType
+from runner.middleware import Middleware
 
 
 class SingleResult(dict):
-    def __init__(self, outcome: Outcome, healthy: bool, player_id: str):
+    def __init__(self, outcome: Outcome, healthy: bool, player_id: str, result: Result, printed: str):
         self.outcome = outcome
         self.healthy = healthy
         self.player_id = player_id
+        self.result = result
+        printed = printed[:1000]
+        self.printed = printed
 
-        super().__init__(outcome=outcome.value, healthy=healthy, player_id=player_id)
+        super().__init__(outcome=outcome.value, healthy=healthy, player_id=player_id, result_code=str(result.value),
+                         printed=printed)
 
 
 class ParsedResult(dict):
-    def __init__(self, recording: dict, submission_results: List[SingleResult]):
-        recording["outcome_txt"] = recording.get("outcome_txt", "unknown")
-        recording["player_prints"] = recording.get("player_prints", [])
-        recording["player_prints"] = [[p[:1000] for p in player[:100]] for player in recording["player_prints"]]
-        self.recording = json.dumps(recording)
+    def __init__(self, moves: list, submission_results: List[SingleResult]):
+        self.recording = json.dumps(moves)
         self.submission_results = submission_results
 
-        super().__init__(recording=recording, submission_results=submission_results)
+        super().__init__(recording=moves, submission_results=submission_results)
 
     @property
     def outcomes(self):
@@ -54,28 +54,26 @@ class ParsedResult(dict):
             result.player_id = value
 
 
-def default_parser(messages: Iterator[Message]):
+def default_parser(middleware: Middleware) -> ParsedResult:
+    messages = middleware.complete_all()
     prints = []
-    results = []
-    end = None
-
-    for message in messages:
-        if message.message_type == MessageType.PRINT:
-            prints.append(message.data["str"])
-        elif message.message_type == MessageType.RESULT:
-            results.append(message.data)
-        elif message.message_type in Message.END_TYPES:
-            end = message
-
-    prints = "\n".join(prints)
-    end = None if end is None else dict(end)
-
-    record = {"printed": prints, "results": results, "end": end}
-    return ParsedResult(record, [])
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+    return ParsedResult(messages, [SingleResult(Outcome.Draw, True, "unknown", Result.ValidGame, pp) for pp in prints])
 
 
-def chess_parser(messages: Iterator[Message]):
-    prints = ([], [], [])
+def info_parser(middleware: Middleware) -> ParsedResult:
+    middleware.send(0, "test", 1, "2", None, kwarg1="hello", kwarg2=["list", "of", "things"])
+    messages = middleware.complete_all()
+    prints = []
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+    return ParsedResult(messages, [SingleResult(Outcome.Draw, True, "debug", Result.ValidGame, pp) for pp in prints])
+
+
+def chess_parser(middleware: Middleware) -> ParsedResult:
+    return ParsedResult([], [])
+    """prints = ([], [], [])
     controller = -1  # -1 for host, 0 for player 0, 1 for player 1
     moves = []
     initial_state = None
@@ -84,7 +82,7 @@ def chess_parser(messages: Iterator[Message]):
     healths = [True, True]
     outcome_txt = None
 
-    for message in messages:
+    for message in container_output_streams:
         if message.message_type == MessageType.PRINT:
             prints[controller + 1].append(message.data["str"])
         elif message.message_type == MessageType.RESULT:
@@ -177,10 +175,12 @@ def chess_parser(messages: Iterator[Message]):
 
     record = {"host_prints": host_prints, "player_prints": player_prints, "initial_state": initial_state,
               "moves": moves, "loser": loser, "outcome_txt": outcome_txt, "final_board": final_board}
-    return ParsedResult(record, submission_results)
+    return ParsedResult(record, submission_results)"""
 
 
-def get(parser) -> Callable[[Iterator[Message]], ParsedResult]:
+def get(parser) -> Callable[[Middleware], ParsedResult]:
+    if parser == "info":
+        return info_parser
     if parser == "chess":
         return chess_parser
 

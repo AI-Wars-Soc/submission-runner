@@ -6,7 +6,7 @@ import subprocess
 import urllib.request
 import numpy as np
 from time import time
-from shared.messages import Sender
+from shared.messages import Sender, Receiver, input_receiver
 
 
 def connect(dom):
@@ -148,11 +148,14 @@ def starts_with_one(s: str, ls):
 
 print("Start Print")
 sender = Sender()
+receiver = Receiver(input_receiver())
+in_stream = receiver.messages_iterator
 all_writable = get_all_writable()
 writable_dirs = [path for path in all_writable if os.path.isdir(path)]
 writable_files = [path for path in all_writable if os.path.isfile(path)]
 writable_others = [path for path in all_writable if (not os.path.isdir(path)) and (not os.path.isfile(path))]
-results = {"has_internet": connect('http://google.com'),
+results = {"input": next(in_stream),
+           "has_internet": connect('http://google.com'),
            "hostname_uses_loopback": hostname_uses_loopback(),
            "dirs": {path: {"readable": readable(path), "writable": writable(path)}
                     for path in ["/", "/home", "/home/sandbox/", "~/", "./", "/var/tmp", "/tmp"]},

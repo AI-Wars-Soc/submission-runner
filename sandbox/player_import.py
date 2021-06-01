@@ -1,9 +1,9 @@
 import importlib
 
 
-def get_player_function(player_id: int, module_name: str, function_name: str):
+def get_player_function(module_name: str, function_name: str):
     try:
-        module = importlib.import_module(f'sandbox.submission{player_id + 1}.{module_name}')
+        module = importlib.import_module(f'submission.{module_name}')
     except ModuleNotFoundError as e:
         raise MissingFunctionError()
 

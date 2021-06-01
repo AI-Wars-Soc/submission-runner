@@ -1,8 +1,14 @@
 import json
+import logging
 import os
-from typing import Iterator, Dict
+from typing import Dict, Callable
+
+from cuwais.config import config_file
 
 from runner import parsers
+from runner.middleware import Middleware
+from runner.parsers import ParsedResult
+from runner.sandbox import TimedContainer
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -13,7 +19,7 @@ _type_names = {
 
 
 class Gamemode:
-    def __init__(self, name, script, parser, players, options):
+    def __init__(self, name, script, parser: Callable[[Middleware], ParsedResult], players, options):
         self.name = str(name)
         self.script = str(script) + ".py"
         self.parse = parsers.get(parser)
@@ -47,6 +53,35 @@ class Gamemode:
             env_vars[key] = str(target_type(env_vars[key]))
 
         return env_vars
+
+    def run(self, submission_hashes=None, options=None) -> ParsedResult:
+        if submission_hashes is None:
+            submission_hashes = []
+        if options is None:
+            options = dict()
+        logging.info("Request for gamemode " + self.name)
+
+        # Create containers
+        timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
+        containers = []
+        for submission_hash in submission_hashes:
+            container = TimedContainer(timeout, submission_hash)
+            containers.append(container)
+
+        # Set up linking through middleware
+        env_vars = self.create_env_vars(**options)
+        middleware = Middleware(containers, env_vars)
+
+        # Run
+        res = self.parse(middleware)
+
+        # Clean up
+        middleware.complete_all()
+
+        for container in containers:
+            container.stop()
+
+        return res
 
 
 def _parse():
