@@ -73,14 +73,17 @@ class Middleware:
         return messages
 
     def call(self, player_id, method_name, *args, **kwargs) -> Any:
-        self.send(player_id, method_name, *args, **kwargs)
+        self._send(player_id, "call", method_name=method_name, method_args=args, method_kwargs=kwargs)
+
+        return self._connections[player_id].get_next_message_data()
+
+    def send_data(self, player_id, **kwargs) -> Any:
+        self._send(player_id, "data", **kwargs)
 
         return self._connections[player_id].get_next_message_data()
 
     def get_player_prints(self, i):
         return self._connections[i].prints
 
-    def send(self, player_id, method_name, *args, **kwargs):
-        self._connections[player_id].send_message({"method_name": method_name,
-                                                   "args": list(args),
-                                                   "kwargs": dict(kwargs)})
+    def _send(self, player_id, instruction, **kwargs):
+        self._connections[player_id].send_message({"type": instruction, **kwargs})

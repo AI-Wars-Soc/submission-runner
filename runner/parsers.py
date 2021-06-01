@@ -63,7 +63,7 @@ def default_parser(middleware: Middleware) -> ParsedResult:
 
 
 def info_parser(middleware: Middleware) -> ParsedResult:
-    middleware.send(0, "test", 1, "2", None, kwarg1="hello", kwarg2=["list", "of", "things"])
+    middleware.send_data(0, array=[0, "test", 1, "2", None], kwarg1="hello", kwarg2=["list", "of", "things"])
     messages = middleware.complete_all()
     prints = []
     for i in range(middleware.player_count):
@@ -72,6 +72,7 @@ def info_parser(middleware: Middleware) -> ParsedResult:
 
 
 def chess_parser(middleware: Middleware) -> ParsedResult:
+    print(middleware.call(0, "make_move", board=None, time_remaining=0))
     messages = middleware.complete_all()
     prints = []
     for i in range(middleware.player_count):

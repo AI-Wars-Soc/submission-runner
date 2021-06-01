@@ -76,8 +76,6 @@ class Gamemode:
         res = self.parse(middleware)
 
         # Clean up
-        middleware.complete_all()
-
         for container in containers:
             container.stop()
 
