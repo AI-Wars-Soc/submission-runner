@@ -1,4 +1,5 @@
 import builtins
+import itertools
 import re
 from enum import Enum, unique
 import json
@@ -39,7 +40,7 @@ class MessageInvalidTypeError(RuntimeError):
 
 
 class Message(dict):
-    def __init__(self, message_type: MessageType, data: dict):
+    def __init__(self, message_type: MessageType, data: Optional[Union[list, dict, int, float, bool]]):
         self.message_type = message_type
         self.data = data
 
@@ -110,27 +111,6 @@ class Message(dict):
     def get_datas(messages: Iterator["Message"]) -> Iterator:
         return map(lambda m: m.data, messages)
 
-    @staticmethod
-    def filter_middle_ends_to_prints(messages: Iterator["Message"]) -> Iterator["Message"]:
-        """Takes a message stream and converts all of the messages that should be at the end
-        of a set of messages but that occur in the middle into print statements with their originally
-        printed values. This fixes the edge case that someone prints one of the used keywords
-        (e.g. 'Done') inside their code."""
-        ends = []
-
-        for message in messages:
-            if message.is_end():
-                ends.append(message)
-                continue
-
-            for end in ends:
-                yield Message(MessageType.PRINT, data=end.data)
-            ends = []
-
-            yield message
-
-        yield from ends
-
 
 class MessageInputStream:
     def __init__(self):
@@ -171,7 +151,17 @@ def input_receiver(input_function=builtins.input) -> Iterator[str]:
 class Receiver:
     def __init__(self, lines: Iterator[str]):
         self._lines = lines
-        self._iterator = self._make_messages_iterator()
+        self._iterator = Receiver._filter_middle_ends_to_prints(Receiver._handshake(self._make_messages_iterator()))
+
+    @staticmethod
+    def _handshake(iterator: Iterator[Message]) -> Iterator[Message]:
+        before = []
+        for m in iterator:
+            if m.message_type == MessageType.NEW_KEY:
+                break
+            before.append(m)
+
+        return itertools.chain(before, iterator)
 
     @property
     def messages_iterator(self) -> Iterator[Message]:
@@ -190,9 +180,29 @@ class Receiver:
             # Update key if message told us to
             if message.message_type == MessageType.NEW_KEY:
                 key = message.data
-                continue  # Don't emit
 
             yield message
+
+    @staticmethod
+    def _filter_middle_ends_to_prints(messages: Iterator["Message"]) -> Iterator["Message"]:
+        """Takes a message stream and converts all of the messages that should be at the end
+        of a set of messages but that occur in the middle into print statements with their originally
+        printed values. This fixes the edge case that someone prints one of the used keywords
+        (e.g. 'Done') inside their code."""
+        ends = []
+
+        for message in messages:
+            if message.is_end():
+                ends.append(message)
+                continue
+
+            for end in ends:
+                yield Message(MessageType.PRINT, data=end.data)
+            ends = []
+
+            yield message
+
+        yield from ends
 
     keyword_messages = {".+\\d+ Killed\\s+timeout .+ python3 .+": MessageType.ERROR_PROCESS_KILLED,
                         "Done": MessageType.END,
@@ -222,8 +232,7 @@ class Receiver:
             return Message(MessageType.NEW_KEY, received_key)
 
         # If it's not a new key then it should have the current key
-        if received_key != key:
+        if received_key is None or received_key != key:
             return Message(MessageType.ERROR_INVALID_ATTACHED_KEY, received_key)
 
         return message
-

@@ -1,7 +1,7 @@
-from typing import Any
+from typing import Any, Iterable
 
 from runner.sandbox import TimedContainer
-from shared.messages import Message, MessageType, Receiver, MessageInputStream
+from shared.messages import Message, MessageType, MessageInputStream
 
 
 class SubmissionNotActiveError(RuntimeError):
@@ -15,9 +15,9 @@ class SubmissionEndWithError(RuntimeError):
 
 
 class ContainerConnection:
-    def __init__(self, container: TimedContainer, env_vars):
+    def __init__(self, script_name: str, container: TimedContainer, env_vars):
         self._input_stream = MessageInputStream()
-        self._output_stream = container.run(self._input_stream, env_vars)
+        self._output_stream = container.run(script_name, self._input_stream, env_vars)
         self._prints = []
         self._done = False
 
@@ -52,8 +52,8 @@ class ContainerConnection:
 
 
 class Middleware:
-    def __init__(self, containers, env_vars):
-        self._connections = [ContainerConnection(container, env_vars) for container in containers]
+    def __init__(self, script_name: str, containers: Iterable[TimedContainer], env_vars):
+        self._connections = [ContainerConnection(script_name, container, env_vars) for container in containers]
 
     @property
     def player_count(self):

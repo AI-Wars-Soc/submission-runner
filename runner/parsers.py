@@ -72,7 +72,11 @@ def info_parser(middleware: Middleware) -> ParsedResult:
 
 
 def chess_parser(middleware: Middleware) -> ParsedResult:
-    return ParsedResult([], [])
+    messages = middleware.complete_all()
+    prints = []
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+    return ParsedResult(messages, [SingleResult(Outcome.Draw, True, "debug", Result.ValidGame, pp) for pp in prints])
     """prints = ([], [], [])
     controller = -1  # -1 for host, 0 for player 0, 1 for player 1
     moves = []

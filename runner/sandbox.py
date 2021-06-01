@@ -22,7 +22,7 @@ from shared.messages import MessageType, Message, Receiver, Sender, MessageInput
 _client = docker.from_env()
 
 
-class MissingEnvVarsError(RuntimeError):
+class InvalidEntryFile(RuntimeError):
     pass
 
 
@@ -172,18 +172,22 @@ class TimedContainer:
 
     @staticmethod
     def _is_script_valid(script_name: str):
-        script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-        return os.path.exists("../sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+        script_name_rex = re.compile("^[a-zA-Z0-9_/]*$")
+        return os.path.exists("../sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
 
-    def run(self, input_messages: MessageInputStream, extra_args: dict) -> Iterator[Message]:
+    def run(self, script_name: str, input_messages: MessageInputStream, extra_args: dict) -> Iterator[Message]:
         if extra_args is None:
             extra_args = dict()
+
+        # Ensure that script is valid
+        if not TimedContainer._is_script_valid(script_name):
+            raise InvalidEntryFile(script_name)
 
         # Get env vars
         env_vars = {**self._env_vars, **extra_args}
 
         # Start script
-        run_script_cmd = "./sandbox/run.sh 'info.py'"
+        run_script_cmd = f"./sandbox/run.sh '{script_name}.py'"
         socket: SSLSocket
         _, socket = self._container.exec_run(cmd=run_script_cmd,
                                              user='sandbox',

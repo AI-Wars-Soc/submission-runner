@@ -21,7 +21,7 @@ _type_names = {
 class Gamemode:
     def __init__(self, name, script, parser: Callable[[Middleware], ParsedResult], players, options):
         self.name = str(name)
-        self.script = str(script) + ".py"
+        self.script = str(script)
         self.parse = parsers.get(parser)
         self.players = int(players)
         self.options = dict(options)
@@ -70,7 +70,7 @@ class Gamemode:
 
         # Set up linking through middleware
         env_vars = self.create_env_vars(**options)
-        middleware = Middleware(containers, env_vars)
+        middleware = Middleware(self.script, containers, env_vars)
 
         # Run
         res = self.parse(middleware)

@@ -5,9 +5,9 @@
     "players": 1
   },
   "chess": {
-    "script": "play_chess",
+    "script": "play",
     "parser": "chess",
-    "players": 2,
+    "players": 1,
     "options": {
       "chess960": {
         "type": "boolean",
