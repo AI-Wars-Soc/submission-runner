@@ -1,7 +1,7 @@
 from typing import Any, Iterable
 
 from runner.sandbox import TimedContainer
-from shared.messages import Message, MessageType, MessageInputStream
+from shared.messages import MessageType
 
 
 class SubmissionNotActiveError(RuntimeError):
@@ -9,15 +9,9 @@ class SubmissionNotActiveError(RuntimeError):
         super(SubmissionNotActiveError, self).__init__()
 
 
-class SubmissionEndWithError(RuntimeError):
-    def __init__(self, final_message: Message):
-        super(SubmissionEndWithError, self).__init__(str(final_message.message_type.value))
-
-
 class ContainerConnection:
     def __init__(self, script_name: str, container: TimedContainer, env_vars):
-        self._input_stream = MessageInputStream()
-        self._output_stream = container.run(script_name, self._input_stream, env_vars)
+        self._connection = container.run(script_name, env_vars)
         self._prints = []
         self._done = False
 
@@ -29,15 +23,13 @@ class ContainerConnection:
         if self._done:
             raise SubmissionNotActiveError()
 
-        for message in self._output_stream:
+        for message in self._connection.receive:
             if message.message_type == MessageType.PRINT:
-                self._prints.append(message.data["str"])
+                self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
+                print(f"Middleware got message data {message}", flush=True)
                 return message.data
-            elif message.is_error():
-                self._done = True
-                raise SubmissionEndWithError(message)
-            elif message.is_end():
+            elif message.message_type == MessageType.END:
                 self._done = True
                 raise SubmissionNotActiveError()
 
@@ -48,10 +40,10 @@ class ContainerConnection:
         if self._done:
             raise SubmissionNotActiveError()
 
-        self._input_stream.send(Message.new_result(data))
+        self._connection.send_result(data)
 
     def send_end(self):
-        self._input_stream.send(Message(MessageType.END, {}))
+        self._connection.send(MessageType.END)
 
 
 class Middleware:
@@ -70,9 +62,11 @@ class Middleware:
             while True:
                 try:
                     data = self._connections[player_id].get_next_message_data()
+                    print(f"Middleware got result {data}", flush=True)
                     new_messages.append(data)
                 except SubmissionNotActiveError:
                     break
+            print(f"Middleware got results {new_messages}", flush=True)
             messages.append(new_messages)
         return messages
 
@@ -81,10 +75,8 @@ class Middleware:
 
         return self._connections[player_id].get_next_message_data()
 
-    def send_data(self, player_id, **kwargs) -> Any:
+    def send_data(self, player_id, **kwargs) -> None:
         self._send(player_id, "data", **kwargs)
-
-        return self._connections[player_id].get_next_message_data()
 
     def _send_ends(self):
         for player_id in range(self.player_count):

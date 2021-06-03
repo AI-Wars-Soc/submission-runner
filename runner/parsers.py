@@ -5,7 +5,8 @@ from typing import List, Callable
 import chess
 from cuwais.common import Outcome, Result
 
-from runner.middleware import Middleware, SubmissionNotActiveError, SubmissionEndWithError
+from runner.middleware import Middleware
+from shared.messages import Encoder
 
 
 class SingleResult(dict):
@@ -23,7 +24,7 @@ class SingleResult(dict):
 
 class ParsedResult(dict):
     def __init__(self, moves: list, submission_results: List[SingleResult]):
-        self.recording = json.dumps(moves)
+        self.recording = json.dumps(moves, cls=Encoder)
         self.submission_results = submission_results
 
         super().__init__(recording=moves, submission_results=submission_results)

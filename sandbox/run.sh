@@ -6,8 +6,4 @@ function runPython {
 
 export -f runPython
 
-if ! timeout -k 3 $SANDBOX_COMMAND_TIMEOUT bash -c runPython $1 ;
-then
-  echo "Timeout" ;
-fi ;
-echo "Done" ;
+timeout -s SIGKILL $2 bash -c runPython $1

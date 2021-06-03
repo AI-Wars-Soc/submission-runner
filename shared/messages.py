@@ -1,12 +1,10 @@
 import builtins
 import itertools
-import re
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
-from typing import Tuple, Iterator, Set, Union, Callable, Optional, Any
-import collections
+from typing import Iterator, Callable, Optional, Any
 
 import chess
 
@@ -17,12 +15,6 @@ class MessageType(Enum):
     RESULT = "RESULT"
     PRINT = "PRINT"
     END = "END"
-    ERROR_PROCESS_KILLED = "ERROR_PROCESS_KILLED"
-    ERROR_PROCESS_TIMEOUT = "ERROR_PROCESS_TIMEOUT"
-    ERROR_INVALID_NEW_KEY = "ERROR_INVALID_NEW_KEY"
-    ERROR_INVALID_ATTACHED_KEY = "ERROR_INVALID_ATTACHED_KEY"
-    ERROR_INVALID_MESSAGE_TYPE = "ERROR_INVALID_MESSAGE_TYPE"
-    ERROR_INVALID_SUBMISSION = "ERROR_INVALID_SUBMISSION"
 
     @staticmethod
     def is_message_type(val: str):
@@ -30,154 +22,105 @@ class MessageType(Enum):
 
 
 class MessageParseError(RuntimeError):
-    def __init__(self, reason: str):
-        self.reason = reason
-        RuntimeError.__init__(self, reason)
+    pass
 
 
-class MessageInvalidTypeError(RuntimeError):
+class MessageParseJSONError(MessageParseError):
+    pass
+
+
+class MessageParseTypeError(MessageParseError):
+    pass
+
+
+class MessageInvalidTypeError(MessageParseError):
     def __init__(self, type_name: str):
         self.type_name = type_name
-        RuntimeError.__init__(self, "Invalid type name: " + str(self.type_name))
+        super().__init__(self, "Invalid type name: " + str(self.type_name))
 
 
-class Message(dict):
-    def __init__(self, message_type: MessageType, data: Optional[Union[list, dict, int, float, bool]]):
-        self.message_type = message_type
+class MessageInvalidNewKey(MessageParseError):
+    def __init__(self, new_key: int):
+        self.new_key = new_key
+        super().__init__(self, "Invalid new key: " + hex(self.new_key))
+
+
+class MessageInvalidAttachedKey(MessageParseError):
+    def __init__(self, key: int):
+        self.key = key
+        super().__init__(self, "Invalid new key: " + hex(self.key))
+
+
+class Message:
+    def __init__(self, key: Optional[int], message_type: MessageType, data):
+        self.key = key
+        self.message_type = MessageType(message_type)
         self.data = data
 
-        message = {
-            "message_type": str(self.message_type.value),
-            "data": self.data
-        }
-        dict.__init__(self, message)
-
-    ERROR_TYPES = {MessageType.ERROR_PROCESS_KILLED,
-                   MessageType.ERROR_PROCESS_TIMEOUT,
-                   MessageType.ERROR_INVALID_NEW_KEY,
-                   MessageType.ERROR_INVALID_ATTACHED_KEY,
-                   MessageType.ERROR_INVALID_MESSAGE_TYPE,
-                   MessageType.ERROR_INVALID_SUBMISSION}
-
-    END_TYPES = {MessageType.END,
-                 *ERROR_TYPES}
-
-    def is_error(self):
-        return self.message_type in self.ERROR_TYPES
-
     def is_end(self):
-        return self.message_type in self.END_TYPES
-
-    def to_string(self, key: dict) -> str:
-        message = dict(self)
-        message["key"] = key
-        return json.dumps(message, cls=Encoder)
+        return self.message_type == MessageType.END
 
     def __str__(self):
         return "<Message type: {}; data: {:20s}>".format(str(self.message_type.value), str(self.data))
 
     @staticmethod
-    def from_string(s: str) -> Tuple[dict, "Message"]:
-        try:
-            message = json.loads(s, cls=Decoder)
-        except JSONDecodeError:
-            raise MessageParseError("Invalid json object: " + s)
-
-        if not isinstance(message, collections.Mapping):
-            raise MessageParseError("Invalid message type (is {}): {}".format(str(type(message)), s))
-
-        try:
-            message_type = message["message_type"]
-            key = message["key"]
-            data = message["data"]
-        except KeyError:
-            raise MessageParseError("Invalid message dict: " + str(message))
-
-        if not MessageType.is_message_type(message_type):
-            raise MessageInvalidTypeError(message_type)
-
-        return key, Message(MessageType(message_type), data)
-
-    @staticmethod
-    def new_result(data) -> "Message":
-        return Message(MessageType.RESULT, data)
-
-    @staticmethod
-    def filter(messages: Iterator["Message"], types: Union[Set[MessageType], MessageType]) -> Iterator["Message"]:
-        if isinstance(types, MessageType):
-            types = {types}
-
-        return filter(lambda m: m.message_type in types, messages)
-
-    @staticmethod
-    def get_datas(messages: Iterator["Message"]) -> Iterator:
-        return map(lambda m: m.data, messages)
+    def new_result(key: int, data) -> "Message":
+        return Message(key, MessageType.RESULT, data)
 
 
-class MessageInputStream:
-    def __init__(self):
-        self._receivers = []
-
-    def register_receiver(self, f: Callable[[Message], Any]):
-        self._receivers.append(f)
-
-    def send(self, m: Message):
-        for f in self._receivers:
-            f(m)
+_input = builtins.input
 
 
-class Sender:
-    def __init__(self, handler: Callable[[str], None] = lambda x: print(x, flush=True)):
-        self._handler = handler
-        self._key = {"code": hex(random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF))}
-
-        # Send a new key message
-        message = Message(MessageType.NEW_KEY, self._key)
-        self.send(message)
-
-    def send(self, message: Message):
-        self._handler(message.to_string(self._key))
-
-    def send_result(self, data):
-        self.send(Message.new_result(data))
-
-
-def input_receiver(input_function=builtins.input) -> Iterator[str]:
+def _input_receiver(input_function=None) -> Iterator[str]:
+    if input_function is None:
+        input_function = _input
     while True:
         s = input_function()
-        if s is None or s == "":
-            return
         yield s
 
 
-class Receiver:
-    def __init__(self, lines: Iterator[str]):
-        self._lines = lines
-        self._iterator = Receiver._handshake(self._make_messages_iterator())
+class Connection:
+    def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
+        # Set up output
+        self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
+        self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+        self._handshake_out()
 
-    @staticmethod
-    def _handshake(iterator: Iterator[Message]) -> Iterator[Message]:
-        before = []
-        for m in iterator:
-            if m.message_type == MessageType.NEW_KEY:
-                break
-            before.append(m)
-
-        return itertools.chain(before, iterator)
+        # Connect input
+        in_stream_text = in_stream if in_stream is not None else _input_receiver()
+        self._in_stream = Connection._make_messages_iterator(in_stream_text)
+        self._in_key = None
+        self._handshake_in()
 
     @property
-    def messages_iterator(self) -> Iterator[Message]:
-        return self._iterator
+    def receive(self):
+        return self._in_stream
 
-    def _make_messages_iterator(self) -> Iterator[Message]:
+    def _handshake_out(self):
+        message = Message(None, MessageType.NEW_KEY, self._out_key)
+        self.send_message(message)
+
+    def _handshake_in(self):
+        prints = []
+        while True:
+            message = next(self._in_stream)
+            print(f"Handshake: {message}", flush=True)
+            if message.message_type == MessageType.NEW_KEY:
+                self._in_stream = itertools.chain(prints, self._in_stream)
+                return
+            if message.message_type == MessageType.PRINT:
+                prints.append(message)
+
+    @staticmethod
+    def _make_messages_iterator(lines: Iterator[str]) -> Iterator[Message]:
         key = None
 
-        for line in self._lines:
+        for line in lines:
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue
 
-            message = Receiver._process_line(key, line)
+            message = Connection._process_line(key, line)
 
             # Update key if message told us to
             if message.message_type == MessageType.NEW_KEY:
@@ -186,69 +129,65 @@ class Receiver:
             yield message
 
     @staticmethod
-    def _filter_middle_ends_to_prints(messages: Iterator["Message"]) -> Iterator["Message"]:
-        """Takes a message stream and converts all of the messages that should be at the end
-        of a set of messages but that occur in the middle into print statements with their originally
-        printed values. This fixes the edge case that someone prints one of the used keywords
-        (e.g. 'Done') inside their code."""
-        ends = []
+    def _message_from_string(s: str) -> "Message":
+        try:
+            message = json.loads(s, cls=Decoder)
+        except JSONDecodeError:
+            raise MessageParseJSONError("Invalid json object: " + s)
 
-        for message in messages:
-            if message.is_end():
-                ends.append(message)
-                continue
+        if not isinstance(message, Message):
+            raise MessageParseTypeError("Invalid message type (is {}): {}".format(str(type(message)), s))
 
-            for end in ends:
-                yield Message(MessageType.PRINT, data=end.data)
-            ends = []
-
-            yield message
-
-        yield from ends
-
-    # TODO: I don't think these are needed
-    keyword_messages = {".+\\d+ Killed\\s+timeout .+ python3 .+": MessageType.ERROR_PROCESS_KILLED,
-                        "Done": MessageType.END,
-                        "Timeout": MessageType.ERROR_PROCESS_TIMEOUT}
+        return message
 
     @staticmethod
-    def _process_line(key: dict, line: str) -> "Message":
-        # Check for special messages
-        for keyword in Receiver.keyword_messages.keys():
-            keyword_rex = re.compile("^{}$".format(keyword))
-            if keyword_rex.match(line) is not None:
-                return Message(Receiver.keyword_messages[keyword], {"str": line})
-
+    def _process_line(key: int, line: str) -> "Message":
         # Check for commands
         try:
-            received_key, message = Message.from_string(line)
-        except MessageInvalidTypeError as e:
-            return Message(MessageType.ERROR_INVALID_MESSAGE_TYPE, {"given": e.type_name})
+            message = Connection._message_from_string(line)
         except MessageParseError:
             # No match => assume print statement
-            return Message(MessageType.PRINT, {"str": line})
+            return Message(key, MessageType.PRINT, line)
 
         # New key is a special case
         if message.message_type == MessageType.NEW_KEY:
             if key is not None:
-                return Message(MessageType.ERROR_INVALID_NEW_KEY, received_key)
-            return Message(MessageType.NEW_KEY, received_key)
+                raise MessageInvalidNewKey(key)
+            return message
 
         # If it's not a new key then it should have the current key
-        if received_key is None or received_key != key:
-            return Message(MessageType.ERROR_INVALID_ATTACHED_KEY, received_key)
+        if message.key is None or message.key != key:
+            raise MessageInvalidAttachedKey(key)
 
         return message
+
+    def send(self, message_type: MessageType, data=None):
+        message = Message(self._out_key, message_type, data)
+        self.send_message(message)
+
+    def send_message(self, message: Message):
+        s = json.dumps(message, cls=Encoder)
+        self._out_handler(s)
+
+    def send_result(self, data):
+        self.send(MessageType.RESULT, data)
 
 
 class Encoder(json.JSONEncoder):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._encoders = {chess.Board: Encoder._chessboard}
+        self._encoders = {Message: Encoder._message,
+                          chess.Board: Encoder._chessboard}
+
+    @staticmethod
+    def _message(message: Message):
+        return {'__custom_type': 'message',
+                'key': message.key,
+                'type': str(message.message_type.value),
+                'data': message.data}
 
     @staticmethod
     def _chessboard(board: chess.Board):
-        chess.Board()
         return {'__custom_type': 'chessboard',
                 'fen': board.fen(),
                 'chess960': board.chess960}
@@ -260,10 +199,18 @@ class Encoder(json.JSONEncoder):
 
 
 class Decoder(json.JSONDecoder):
-
     def __init__(self, *args, **kwargs):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
-        self._decoders = {'chessboard': Decoder._chessboard}
+        self._decoders = {'message': Decoder._message,
+                          'chessboard': Decoder._chessboard}
+
+    @staticmethod
+    def _message(data: dict):
+        return Message(key=data['key'], message_type=MessageType(data['type']), data=data['data'])
+
+    @staticmethod
+    def _message_type(message_type: str):
+        return MessageType(message_type)
 
     @staticmethod
     def _chessboard(data: dict):

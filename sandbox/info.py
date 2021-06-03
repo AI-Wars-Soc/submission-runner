@@ -1,4 +1,3 @@
-import json
 import os
 import platform
 import socket
@@ -6,7 +5,7 @@ import subprocess
 import urllib.request
 import numpy as np
 from time import time
-from shared.messages import Sender, Receiver, input_receiver
+from shared.messages import Connection
 
 
 def connect(dom):
@@ -147,9 +146,8 @@ def starts_with_one(s: str, ls):
 
 
 print("Start Print")
-sender = Sender()
-receiver = Receiver(input_receiver())
-in_stream = receiver.messages_iterator
+connection = Connection()
+in_stream = connection.receive
 all_writable = get_all_writable()
 writable_dirs = [path for path in all_writable if os.path.isdir(path)]
 writable_files = [path for path in all_writable if os.path.isfile(path)]
@@ -169,5 +167,5 @@ results = {"input": next(in_stream),
            "process": {"cwd": os.getcwd(), "pid": os.getpid()},
            "numpy_benchmark": numpy_speed_test()}
 print("Mid Print")
-sender.send_result(results)
+connection.send_result(results)
 print("End Print")

@@ -2,7 +2,7 @@ import builtins
 import traceback
 
 from sandbox import player_import
-from shared.messages import Sender, Receiver, input_receiver, MessageType
+from shared.messages import MessageType, Connection
 
 
 def call(method_name, method_args, method_kwargs):
@@ -22,11 +22,9 @@ def get_instructions(messages):
 
 
 def main():
-    sender = Sender()
-    receiver = Receiver(input_receiver())
-    in_stream = receiver.messages_iterator
+    connection = Connection()
+    in_stream = connection.receive
     instructions = get_instructions(in_stream)
-    print("")  # TODO: Remove. This does something for some reason, probably flushes some stream somewhere but it's required
 
     # Reduce things that can accidentally go wrong
     def fake_input(*args, **kwargs):
@@ -47,11 +45,11 @@ def main():
             data = dispatch(**instruction)
         except:  # ignore
             traceback.print_exc()
-            sender.send_result(None)
+            connection.send_result(None)
             return
 
         # Sendback
-        sender.send_result(data)
+        connection.send_result(data)
         print("Finished fetch", flush=True)
 
 
