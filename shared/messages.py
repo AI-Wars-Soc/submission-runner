@@ -168,6 +168,7 @@ class Connection:
     def send_message(self, message: Message):
         s = json.dumps(message, cls=Encoder)
         self._out_handler(s)
+        self._out_handler("\n" * 100000)  # TODO: This is so so so so so so so so so so so so so so so so so so so dumb
 
     def send_result(self, data):
         self.send(MessageType.RESULT, data)
@@ -177,7 +178,8 @@ class Encoder(json.JSONEncoder):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._encoders = {Message: Encoder._message,
-                          chess.Board: Encoder._chessboard}
+                          chess.Board: Encoder._chessboard,
+                          chess.Move: Encoder._chess_move}
 
     @staticmethod
     def _message(message: Message):
@@ -192,6 +194,11 @@ class Encoder(json.JSONEncoder):
                 'fen': board.fen(),
                 'chess960': board.chess960}
 
+    @staticmethod
+    def _chess_move(move: chess.Move):
+        return {'__custom_type': 'chess_move',
+                'uci': move.uci()}
+
     def default(self, obj):
         if type(obj) in self._encoders:
             return self._encoders[type(obj)](obj)
@@ -202,7 +209,8 @@ class Decoder(json.JSONDecoder):
     def __init__(self, *args, **kwargs):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
         self._decoders = {'message': Decoder._message,
-                          'chessboard': Decoder._chessboard}
+                          'chessboard': Decoder._chessboard,
+                          'chess_move': Decoder._chess_move}
 
     @staticmethod
     def _message(data: dict):
@@ -215,6 +223,10 @@ class Decoder(json.JSONDecoder):
     @staticmethod
     def _chessboard(data: dict):
         return chess.Board(fen=data['fen'], chess960=data['chess960'])
+
+    @staticmethod
+    def _chess_move(data: dict):
+        return chess.Move.from_uci(data['uci'])
 
     def object_hook(self, obj):
         if '__custom_type' not in obj:

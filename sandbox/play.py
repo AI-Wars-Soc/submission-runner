@@ -32,9 +32,7 @@ def main():
     builtins.input = fake_input
 
     # Fetch
-    print("Starting fetch", flush=True)
     for instruction in instructions:
-        print(f"Instruction {instruction}", flush=True)
         # Decode
         t = instruction["type"]
         del instruction["type"]
@@ -50,7 +48,6 @@ def main():
 
         # Sendback
         connection.send_result(data)
-        print("Finished fetch", flush=True)
 
 
 if __name__ == "__main__":
