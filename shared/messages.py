@@ -8,6 +8,8 @@ import random
 from typing import Tuple, Iterator, Set, Union, Callable, Optional, Any
 import collections
 
+import chess
+
 
 @unique
 class MessageType(Enum):
@@ -69,7 +71,7 @@ class Message(dict):
     def to_string(self, key: dict) -> str:
         message = dict(self)
         message["key"] = key
-        return json.dumps(message)
+        return json.dumps(message, cls=Encoder)
 
     def __str__(self):
         return "<Message type: {}; data: {:20s}>".format(str(self.message_type.value), str(self.data))
@@ -77,7 +79,7 @@ class Message(dict):
     @staticmethod
     def from_string(s: str) -> Tuple[dict, "Message"]:
         try:
-            message = json.loads(s)
+            message = json.loads(s, cls=Decoder)
         except JSONDecodeError:
             raise MessageParseError("Invalid json object: " + s)
 
@@ -151,7 +153,7 @@ def input_receiver(input_function=builtins.input) -> Iterator[str]:
 class Receiver:
     def __init__(self, lines: Iterator[str]):
         self._lines = lines
-        self._iterator = Receiver._filter_middle_ends_to_prints(Receiver._handshake(self._make_messages_iterator()))
+        self._iterator = Receiver._handshake(self._make_messages_iterator())
 
     @staticmethod
     def _handshake(iterator: Iterator[Message]) -> Iterator[Message]:
@@ -204,6 +206,7 @@ class Receiver:
 
         yield from ends
 
+    # TODO: I don't think these are needed
     keyword_messages = {".+\\d+ Killed\\s+timeout .+ python3 .+": MessageType.ERROR_PROCESS_KILLED,
                         "Done": MessageType.END,
                         "Timeout": MessageType.ERROR_PROCESS_TIMEOUT}
@@ -236,3 +239,40 @@ class Receiver:
             return Message(MessageType.ERROR_INVALID_ATTACHED_KEY, received_key)
 
         return message
+
+
+class Encoder(json.JSONEncoder):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._encoders = {chess.Board: Encoder._chessboard}
+
+    @staticmethod
+    def _chessboard(board: chess.Board):
+        chess.Board()
+        return {'__custom_type': 'chessboard',
+                'fen': board.fen(),
+                'chess960': board.chess960}
+
+    def default(self, obj):
+        if type(obj) in self._encoders:
+            return self._encoders[type(obj)](obj)
+        return super(Encoder, self).default(obj)
+
+
+class Decoder(json.JSONDecoder):
+
+    def __init__(self, *args, **kwargs):
+        json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
+        self._decoders = {'chessboard': Decoder._chessboard}
+
+    @staticmethod
+    def _chessboard(data: dict):
+        return chess.Board(fen=data['fen'], chess960=data['chess960'])
+
+    def object_hook(self, obj):
+        if '__custom_type' not in obj:
+            return obj
+        custom_type = obj['__custom_type']
+        if custom_type in self._decoders:
+            return self._decoders[custom_type](obj)
+        return obj

@@ -1,9 +1,11 @@
 import json
+import random
 from typing import List, Callable
 
+import chess
 from cuwais.common import Outcome, Result
 
-from runner.middleware import Middleware
+from runner.middleware import Middleware, SubmissionNotActiveError, SubmissionEndWithError
 
 
 class SingleResult(dict):
@@ -72,7 +74,9 @@ def info_parser(middleware: Middleware) -> ParsedResult:
 
 
 def chess_parser(middleware: Middleware) -> ParsedResult:
-    print(middleware.call(0, "make_move", board=None, time_remaining=0))
+    board = chess.Board.from_chess960_pos(random.randint(0, 959))
+    print("Player 1 move: " + middleware.call(0, "make_move", board=board, time_remaining=0), flush=True)
+    print("Player 2 move: " + middleware.call(1, "make_move", board=board, time_remaining=0), flush=True)
     messages = middleware.complete_all()
     prints = []
     for i in range(middleware.player_count):

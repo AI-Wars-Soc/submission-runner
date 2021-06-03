@@ -1,12 +1,13 @@
 import json
 import logging
 import os
+import traceback
 from typing import Dict, Callable
 
 from cuwais.config import config_file
 
 from runner import parsers
-from runner.middleware import Middleware
+from runner.middleware import Middleware, SubmissionEndWithError
 from runner.parsers import ParsedResult
 from runner.sandbox import TimedContainer
 
@@ -76,6 +77,10 @@ class Gamemode:
         res = self.parse(middleware)
 
         # Clean up
+        try:
+            middleware.complete_all()
+        except SubmissionEndWithError:
+            traceback.print_exc()
         for container in containers:
             container.stop()
 

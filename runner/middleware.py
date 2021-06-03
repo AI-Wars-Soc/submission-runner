@@ -50,6 +50,9 @@ class ContainerConnection:
 
         self._input_stream.send(Message.new_result(data))
 
+    def send_end(self):
+        self._input_stream.send(Message(MessageType.END, {}))
+
 
 class Middleware:
     def __init__(self, script_name: str, containers: Iterable[TimedContainer], env_vars):
@@ -60,6 +63,7 @@ class Middleware:
         return len(self._connections)
 
     def complete_all(self):
+        self._send_ends()
         messages = []
         for player_id in range(self.player_count):
             new_messages = []
@@ -81,6 +85,10 @@ class Middleware:
         self._send(player_id, "data", **kwargs)
 
         return self._connections[player_id].get_next_message_data()
+
+    def _send_ends(self):
+        for player_id in range(self.player_count):
+            self._connections[player_id].send_end()
 
     def get_player_prints(self, i):
         return self._connections[i].prints

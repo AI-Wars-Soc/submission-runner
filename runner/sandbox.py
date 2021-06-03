@@ -5,9 +5,8 @@ import os
 import re
 import tarfile
 import threading
-from functools import partial
 from ssl import SSLSocket
-from typing import Iterator, Tuple, Any
+from typing import Iterator, Tuple, Any, Optional
 
 import docker
 import docker.errors
@@ -34,6 +33,7 @@ class TimedContainer:
     After this, the container will force close, with every message stream
     closing with a `ERROR_PROCESS_TIMEOUT` message
     """
+    _container: Optional[Container]
 
     def __init__(self, timeout: int, submission_hash: str):
         self.timeout = timeout
@@ -58,7 +58,8 @@ class TimedContainer:
     def stop(self):
         try:
             if self._container is not None and self._container.status in {"running", "created", "restarting", "paused"}:
-                self._container.stop(timeout=3)
+                self._container.stop(timeout=0)
+                # self._container.remove()
         except docker.errors.NotFound:
             pass
         finally:
@@ -144,13 +145,9 @@ class TimedContainer:
             container.stop()
 
     @staticmethod
-    def _get_strings(socket: SSLSocket) -> Iterator[str]:
-        for data in iter(partial(socket.recv, 2048), b''):
-            yield str(data.decode())
-
-    @staticmethod
     def _decode_strings_from_tuples(chunks: Iterator[Tuple[Any, bytes]]) -> Iterator[str]:
         for chunk in chunks:
+            print(f"Got chunk {chunk}", flush=True)
             yield chunk[1].decode()
 
     @staticmethod
