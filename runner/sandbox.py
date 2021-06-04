@@ -102,7 +102,8 @@ class TimedContainer:
                                       memswap_limit=mem_limit,
                                       cpu_period=100000,
                                       cpu_quota=cpu_quota,
-                                      tty=True,
+                                      tty=False,
+                                      stream=True,
                                       network_mode='none',
                                       cap_drop=["ALL"],
                                       # read_only=True,  # marks all volumes as read only, just in case
@@ -138,18 +139,57 @@ class TimedContainer:
     def _timeout_method(self, timeout: int):
         try:
             self._container.wait(timeout=timeout)
-        except requests.exceptions.ReadTimeout:
+        except requests.exceptions.ReadTimeout or requests.exceptions.ConnectionError:
             if not self._stopped:
                 self._timed_out = True
                 self.stop()
-        except requests.exceptions.ConnectionError:
-            traceback.print_exc()
 
     @staticmethod
-    def _decode_strings_from_tuples(chunks: Iterator[Tuple[Any, bytes]]) -> Iterator[str]:
-        for chunk in chunks:
-            print(f"Got chunk {chunk}", flush=True)
-            yield chunk[1].decode()
+    def _read(socket, n=4096):
+        """
+        Reads at most n bytes from socket
+        Pulled from docker API (docker.utils.socket) with the removal of the below lines
+        because they cause infinite hanging
+        TODO: See if there is a better solution to this
+        """
+
+        recoverable_errors = (docker.utils.socket.errno.EINTR, docker.utils.socket.errno.EDEADLK, docker.utils.socket.errno.EWOULDBLOCK)
+
+        # if docker.utils.socket.six.PY3 and not isinstance(socket, docker.utils.socket.NpipeSocket):
+            # docker.utils.socket.select.select([socket], [], [])
+
+        try:
+            if hasattr(socket, 'recv'):
+                return socket.recv(n)
+            if docker.utils.socket.six.PY3 and isinstance(socket, getattr(docker.utils.socket.pysocket, 'SocketIO')):
+                return socket.read(n)
+            return os.read(socket.fileno(), n)
+        except EnvironmentError as e:
+            if e.errno not in recoverable_errors:
+                raise
+
+    @staticmethod
+    def _frames_iter_no_tty(socket):
+        """
+        Returns a generator of data read from the socket when the tty setting is
+        not enabled.
+
+        Taken from docker.utils.socket
+        """
+        while True:
+            (stream, n) = docker.utils.socket.next_frame_header(socket)
+            if n < 0:
+                break
+            while n > 0:
+                result = TimedContainer._read(socket, n)
+                if result is None:
+                    continue
+                data_length = len(result)
+                if data_length == 0:
+                    # We have reached EOF
+                    return
+                n -= data_length
+                yield result.decode()
 
     @staticmethod
     def _get_lines(strings: Iterator[str]) -> Iterator[str]:
@@ -201,7 +241,7 @@ class TimedContainer:
         socket: SSLSocket
         _, socket = self._container.exec_run(cmd=run_script_cmd,
                                              user='sandbox',
-                                             # stream=True,
+                                             stream=True,
                                              socket=True,
                                              stdin=True,
                                              tty=False,
@@ -213,8 +253,8 @@ class TimedContainer:
             socket.write((m + "\n").encode())
 
         # Process output from the container
-        chunks = docker.utils.socket.frames_iter_no_tty(socket)
-        strings = TimedContainer._decode_strings_from_tuples(chunks)
+        socket.settimeout(self.timeout)
+        strings = TimedContainer._frames_iter_no_tty(socket)
         lines = TimedContainer._get_lines(strings)
         received = self._add_stop(self._add_timeout_exception(lines))
 
