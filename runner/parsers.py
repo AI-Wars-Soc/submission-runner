@@ -76,6 +76,9 @@ def info_parser(middleware: Middleware) -> ParsedResult:
 
 
 def play_chess(middleware: Middleware):
+    latency = [sum([middleware.ping(i) for _ in range(10)]) / 10 for i in range(2)]
+    print(f"latencies: {latency}", flush=True)
+
     board = chess.Board.from_chess960_pos(random.randint(0, 959))
     player_turn = 0
     time_remaining = [10, 10]
@@ -89,7 +92,9 @@ def play_chess(middleware: Middleware):
         move = middleware.call(player_turn, "make_move", board=board, time_remaining=time_remaining[player_turn])
         end_time = time.time_ns()
 
-        time_remaining[player_turn] -= (end_time - start_time) / 1e9
+        t = (end_time - start_time) / 1e9
+        t -= latency[player_turn]
+        time_remaining[player_turn] -= t
 
         if time_remaining[player_turn] <= 0:
             return make_loss(player_turn), Result.Timeout, moves
@@ -106,7 +111,7 @@ def play_chess(middleware: Middleware):
         player_turn = 1 - player_turn
 
     if board.is_checkmate():
-        # Because we tick on the player id, the losing player is always the current player
+        # Because we increment the player id, the losing player is always the current player
         return make_loss(player_turn), Result.ValidGame, moves
     elif board.is_stalemate() or board.is_insufficient_material() or board.is_seventyfive_moves():
         return (Outcome.Draw, Outcome.Draw), Result.ValidGame, moves

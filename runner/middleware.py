@@ -1,3 +1,4 @@
+import time
 from typing import Any, Iterable
 
 from runner.sandbox import TimedContainer
@@ -27,7 +28,6 @@ class ContainerConnection:
             if message.message_type == MessageType.PRINT:
                 self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
-                print(f"Middleware got message data {message}", flush=True)
                 return message.data
             elif message.message_type == MessageType.END:
                 self._done = True
@@ -62,11 +62,9 @@ class Middleware:
             while True:
                 try:
                     data = self._connections[player_id].get_next_message_data()
-                    print(f"Middleware got result {data}", flush=True)
                     new_messages.append(data)
                 except SubmissionNotActiveError:
                     break
-            print(f"Middleware got results {new_messages}", flush=True)
             messages.append(new_messages)
         return messages
 
@@ -77,6 +75,15 @@ class Middleware:
 
     def send_data(self, player_id, **kwargs) -> None:
         self._send(player_id, "data", **kwargs)
+
+    def ping(self, player_id) -> float:
+        start_time = time.time_ns()
+        self._send(player_id, "ping")
+
+        self._connections[player_id].get_next_message_data()
+        end_time = time.time_ns()
+
+        return (end_time - start_time) / 1e9
 
     def _send_ends(self):
         for player_id in range(self.player_count):

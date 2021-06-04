@@ -1,5 +1,6 @@
 import builtins
 import itertools
+import sys
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -104,7 +105,6 @@ class Connection:
         prints = []
         while True:
             message = next(self._in_stream)
-            print(f"Handshake: {message}", flush=True)
             if message.message_type == MessageType.NEW_KEY:
                 self._in_stream = itertools.chain(prints, self._in_stream)
                 return
@@ -168,7 +168,6 @@ class Connection:
     def send_message(self, message: Message):
         s = json.dumps(message, cls=Encoder)
         self._out_handler(s)
-        self._out_handler("\n" * 100000)  # TODO: This is so so so so so so so so so so so so so so so so so so so dumb
 
     def send_result(self, data):
         self.send(MessageType.RESULT, data)

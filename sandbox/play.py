@@ -11,6 +11,10 @@ def call(method_name, method_args, method_kwargs):
     return "" if result is None else result
 
 
+def ping():
+    return "pong"
+
+
 def get_instructions(messages):
     for message in messages:
         if message.is_end():
@@ -36,7 +40,8 @@ def main():
         # Decode
         t = instruction["type"]
         del instruction["type"]
-        dispatch = {"call": call}[t]
+        dispatch = {"call": call,
+                    "ping": ping}[t]
 
         # Execute
         try:
