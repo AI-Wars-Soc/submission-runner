@@ -64,20 +64,21 @@ class Gamemode:
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
         containers = []
-        for submission_hash in submission_hashes:
-            container = TimedContainer(timeout, submission_hash)
-            containers.append(container)
+        try:
+            for submission_hash in submission_hashes:
+                container = TimedContainer(timeout, submission_hash)
+                containers.append(container)
 
-        # Set up linking through middleware
-        env_vars = self.create_env_vars(**options)
-        middleware = Middleware(self.script, containers, env_vars)
+            # Set up linking through middleware
+            env_vars = self.create_env_vars(**options)
+            middleware = Middleware(self.script, containers, env_vars)
 
-        # Run
-        res = self.parse(middleware)
-
-        # Clean up
-        for container in containers:
-            container.stop()
+            # Run
+            res = self.parse(middleware)
+        finally:
+            # Clean up
+            for container in containers:
+                container.stop()
 
         return res
 

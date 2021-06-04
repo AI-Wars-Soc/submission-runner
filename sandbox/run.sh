@@ -1,6 +1,6 @@
 #!/bin/bash
 function runPython {
-  python3 /home/sandbox/sandbox/$0 ;
+  python3 -u /home/sandbox/sandbox/$0 ;
   return 0 ;
 }
 
