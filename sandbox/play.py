@@ -1,7 +1,9 @@
 import builtins
+import sys
 import traceback
 
 from sandbox import player_import
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
 from shared.messages import MessageType, Connection
 
 
@@ -37,22 +39,25 @@ def main():
 
     # Fetch
     for instruction in instructions:
-        # Decode
-        t = instruction["type"]
-        del instruction["type"]
-        dispatch = {"call": call,
-                    "ping": ping}[t]
-
-        # Execute
         try:
-            data = dispatch(**instruction)
-        except:  # ignore
-            traceback.print_exc()
-            connection.send_result(None)
-            return
+            # Decode
+            t = instruction["type"]
+            del instruction["type"]
+            dispatch = {"call": call,
+                        "ping": ping}[t]
 
-        # Sendback
-        connection.send_result(data)
+            # Execute
+            data = dispatch(**instruction)
+
+            # Sendback
+            connection.send_result(data)
+        except MissingFunctionError as e:
+            connection.send_result(e)
+        except Exception:
+            traceback.print_exc()
+            tb = traceback.format_exception(*sys.exc_info())
+
+            connection.send_result(ExceptionTraceback(tb))
 
 
 if __name__ == "__main__":

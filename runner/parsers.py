@@ -6,7 +6,8 @@ from typing import List, Callable
 import chess
 from cuwais.common import Outcome, Result
 
-from runner.middleware import Middleware
+from runner.middleware import Middleware, SubmissionNotActiveError
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
 from shared.messages import Encoder
 
 
@@ -89,7 +90,10 @@ def play_chess(middleware: Middleware):
 
     while not board.is_game_over():
         start_time = time.time_ns()
-        move = middleware.call(player_turn, "make_move", board=board, time_remaining=time_remaining[player_turn])
+        try:
+            move = middleware.call(player_turn, "make_move", board=board, time_remaining=time_remaining[player_turn])
+        except SubmissionNotActiveError:
+            return make_loss(player_turn), Result.ProcessKilled, moves
         end_time = time.time_ns()
 
         t = (end_time - start_time) / 1e9
@@ -99,10 +103,16 @@ def play_chess(middleware: Middleware):
         if time_remaining[player_turn] <= 0:
             return make_loss(player_turn), Result.Timeout, moves
 
+        if isinstance(move, MissingFunctionError):
+            return make_loss(player_turn), Result.BrokenEntryPoint, moves
+
+        if isinstance(move, ExceptionTraceback):
+            return make_loss(player_turn), Result.Exception, moves
+
         if isinstance(move, str):
             move = chess.Move.from_uci(move)
 
-        if not isinstance(move, chess.Move) or move not in board.legal_moves:
+        if move is None or not isinstance(move, chess.Move) or move not in board.legal_moves:
             return make_loss(player_turn), Result.IllegalMove, moves
 
         moves.append(move)

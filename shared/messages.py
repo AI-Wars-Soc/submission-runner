@@ -9,6 +9,8 @@ from typing import Iterator, Callable, Optional, Any
 
 import chess
 
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
+
 
 @unique
 class MessageType(Enum):
@@ -177,6 +179,8 @@ class Encoder(json.JSONEncoder):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._encoders = {Message: Encoder._message,
+                          MissingFunctionError: Encoder._missing_function_error,
+                          ExceptionTraceback: Encoder._exception_trace,
                           chess.Board: Encoder._chessboard,
                           chess.Move: Encoder._chess_move}
 
@@ -186,6 +190,16 @@ class Encoder(json.JSONEncoder):
                 'key': message.key,
                 'type': str(message.message_type.value),
                 'data': message.data}
+
+    @staticmethod
+    def _missing_function_error(e: MissingFunctionError):
+        return {'__custom_type': 'missing_function_error',
+                'str': str(e)}
+
+    @staticmethod
+    def _exception_trace(e: ExceptionTraceback):
+        return {'__custom_type': 'exception_trace',
+                'msg': str(e.e_trace)}
 
     @staticmethod
     def _chessboard(board: chess.Board):
@@ -208,12 +222,22 @@ class Decoder(json.JSONDecoder):
     def __init__(self, *args, **kwargs):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
         self._decoders = {'message': Decoder._message,
+                          'missing_function_error': Decoder._missing_function_error,
+                          'exception_trace': Decoder._exception_trace,
                           'chessboard': Decoder._chessboard,
                           'chess_move': Decoder._chess_move}
 
     @staticmethod
     def _message(data: dict):
         return Message(key=data['key'], message_type=MessageType(data['type']), data=data['data'])
+
+    @staticmethod
+    def _missing_function_error(e: dict):
+        return MissingFunctionError(e['str'])
+
+    @staticmethod
+    def _exception_trace(e: dict):
+        return ExceptionTraceback(e['msg'])
 
     @staticmethod
     def _message_type(message_type: str):
@@ -233,4 +257,5 @@ class Decoder(json.JSONDecoder):
         custom_type = obj['__custom_type']
         if custom_type in self._decoders:
             return self._decoders[custom_type](obj)
+
         return obj

@@ -7,4 +7,4 @@ allowed_email_domain: "cam.ac.uk"
 front_end:
   server_name: "lvh.me"
 submission_runner:
-  matchmakers: 0
+  matchmakers: 2

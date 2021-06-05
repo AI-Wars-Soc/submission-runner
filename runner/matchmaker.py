@@ -13,7 +13,7 @@ from cuwais.config import config_file
 from cuwais.database import Submission, Result, Match
 from sqlalchemy import func, and_
 
-from runner import gamemodes, sandbox
+from runner import gamemodes
 from runner.parsers import ParsedResult, SingleResult
 
 logger = logging.getLogger(__name__)
@@ -274,7 +274,9 @@ def _save_result(submissions: List[Submission],
                             outcome=int(submission_result.outcome.value),
                             healthy=submission_result.healthy,
                             points_delta=delta,
-                            player_id=submission_result.player_id)
+                            player_id=submission_result.player_id,
+                            prints=submission_result.printed,
+                            result_code=str(submission_result.result.value))
             database_session.add(result)
 
         database_session.commit()
@@ -282,10 +284,9 @@ def _save_result(submissions: List[Submission],
     return match
 
 
-def _run_match(gamemode: gamemodes.Gamemode, options, submissions: List[Submission]):
+def _run_match(gamemode: gamemodes.Gamemode, options, submissions: List[Submission]) -> ParsedResult:
     submission_hashes = [submission.files_hash for submission in submissions]
-    messages = gamemode.run(submission_hashes, options)
-    return gamemode.parse(messages)
+    return gamemode.run(submission_hashes, options)
 
 
 def _run_typical_match(gamemode: gamemodes.Gamemode, options) -> bool:
