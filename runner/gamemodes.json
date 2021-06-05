@@ -1,10 +1,11 @@
 {
   "info": {
     "script": "info",
-    "players": 0
+    "parser": "info",
+    "players": 1
   },
   "chess": {
-    "script": "play_chess",
+    "script": "play",
     "parser": "chess",
     "players": 2,
     "options": {

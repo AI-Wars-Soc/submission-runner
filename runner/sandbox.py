@@ -1,27 +1,37 @@
 import io
+import os
+import re
 import tarfile
 import threading
+import traceback
+from ssl import SSLSocket
+from typing import Iterator, Tuple, Any, Optional
 
 import docker
 import docker.errors
 import docker.types.daemon
-import os
-import re
-
+import docker.utils.socket
 import requests
 from cuwais.config import config_file
 from docker.models.containers import Container
 
-from runner import gamemodes
-from shared.messages import MessageType, Message, Receiver
-from typing import Iterator
-import logging
+from shared.messages import Connection
 
 _client = docker.from_env()
 
 
-class MissingEnvVarsError(RuntimeError):
+class InvalidEntryFile(RuntimeError):
     pass
+
+
+class InvalidSubmissionError(RuntimeError):
+    pass
+
+
+class ContainerTimedOutException(RuntimeError):
+    def __init__(self, container):
+        self.container = container
+        super().__init__()
 
 
 class TimedContainer:
@@ -29,13 +39,13 @@ class TimedContainer:
     A container which lives for a maximum of `timeout`ms.
     Commands can be run on the container and files transferred to it,
     but all of this must be done within the timeout given.
-    After this, the container will force close, with every message stream
-    closing with a `ERROR_PROCESS_TIMEOUT` message
+    After this, the container will force close
     """
+    _container: Optional[Container]
 
-    def __init__(self, timeout):
+    def __init__(self, timeout: int, submission_hash: str):
         self.timeout = timeout
-        self.running_files = {}
+        self.submission_hash = submission_hash
 
         # Create container
         self._env_vars = TimedContainer._get_env_vars()
@@ -43,22 +53,28 @@ class TimedContainer:
 
         # Copy information
         self._copy_sandbox_scripts()
+        self._copy_submission(submission_hash)
+        self._lock_down()
 
         # Create kill thread
-        self.stopped = False
         self._kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, timeout,))
         self._kill_thread.setDaemon(True)
         self._kill_thread.start()
-        self._killed_messages = []
+        self._timed_out = False
+        self._stopped = False
 
     def stop(self):
+        self._stopped = True
         try:
-            if self._container is not None and self._container.status in {"running", "created", "restarting", "paused"}:
-                self._container.stop(timeout=3)
+            if self._container is not None \
+                    and self._container.status in {"running", "created", "restarting", "paused"}:
+                self._container.stop(timeout=0)
+                # self._container.remove()
         except docker.errors.NotFound:
             pass
         finally:
             self._container = None
+            self._kill_thread.join()
 
     def __enter__(self):
         return self
@@ -69,10 +85,6 @@ class TimedContainer:
     @staticmethod
     def _get_env_vars() -> dict:
         env_vars = dict()
-        unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
-        run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
-        env_vars['SANDBOX_COMMAND_TIMEOUT'] = f"{unrun_t}s"
-        env_vars['SANDBOX_CONTAINER_TIMEOUT'] = f"{run_t}s"
         env_vars['PYTHONPATH'] = "/home/sandbox/"
 
         return env_vars
@@ -80,6 +92,8 @@ class TimedContainer:
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
+        disk_limit = str(int(config_file.get("submission_runner.sandbox_disk_limit_megabytes"))) + "M"
+        unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
         cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
         return _client.containers.run("aiwarssoc/sandbox",
                                       detach=True,
@@ -88,16 +102,19 @@ class TimedContainer:
                                       memswap_limit=mem_limit,
                                       cpu_period=100000,
                                       cpu_quota=cpu_quota,
-                                      tty=True,
+                                      tty=False,
+                                      stream=True,
                                       network_mode='none',
                                       cap_drop=["ALL"],
                                       # read_only=True,  # marks all volumes as read only, just in case
                                       environment=env_vars,
-                                      command="sh -c 'sleep $SANDBOX_CONTAINER_TIMEOUT'",
+                                      command=f"sh -c 'sleep {unrun_t}'",
                                       user='sandbox',
                                       tmpfs={
-                                          '/tmp': 'size=64M',
-                                          '/var/tmp': 'size=64M'
+                                          '/tmp': f'size={disk_limit}',
+                                          '/var/tmp': f'size={disk_limit}',
+                                          '/run/lock': f'size=1M',
+                                          '/var/lock': f'size=1M'
                                       })
 
     @staticmethod
@@ -114,34 +131,72 @@ class TimedContainer:
             # Send
             self._container.put_archive("/home/sandbox/", fh.getvalue())
 
-        # Fix ownership
-        self._container.exec_run("chown -R sandbox:sandbox /home/sandbox/", user='root')
-        self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user='root')
+    def _lock_down(self):
+        # Set write limits
+        self._container.exec_run("chown -hvR root /home/sandbox/", user="root")
+        self._container.exec_run("chmod -R ugo-w /home/sandbox/", user="root")
 
-    def _error(self, message_type: MessageType, **kwargs) -> Message:
-        data = dict({'identifier': str(self)}, **kwargs)
-
-        message = Message(message_type, data)
-
-        logging.error("{}: {}".format(message_type, str(data)))
-
-        return message
-
-    @staticmethod
-    def _timeout_method(container: 'TimedContainer', timeout: int):
+    def _timeout_method(self, timeout: int):
         try:
-            container._container.wait(timeout=timeout)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
-            container._killed_messages.append(container._error(MessageType.ERROR_PROCESS_TIMEOUT))
-            container.stop()
+            self._container.wait(timeout=timeout)
+        except requests.exceptions.ReadTimeout or requests.exceptions.ConnectionError:
+            if not self._stopped:
+                self._timed_out = True
+                self.stop()
 
     @staticmethod
-    def _get_lines(strings):
+    def _read(socket, n=4096):
+        """
+        Reads at most n bytes from socket
+        Pulled from docker API (docker.utils.socket) with the removal of the below lines
+        because they cause infinite hanging
+        TODO: See if there is a better solution to this
+        """
+
+        recoverable_errors = (docker.utils.socket.errno.EINTR, docker.utils.socket.errno.EDEADLK, docker.utils.socket.errno.EWOULDBLOCK)
+
+        # if docker.utils.socket.six.PY3 and not isinstance(socket, docker.utils.socket.NpipeSocket):
+            # docker.utils.socket.select.select([socket], [], [])
+
+        try:
+            if hasattr(socket, 'recv'):
+                return socket.recv(n)
+            if docker.utils.socket.six.PY3 and isinstance(socket, getattr(docker.utils.socket.pysocket, 'SocketIO')):
+                return socket.read(n)
+            return os.read(socket.fileno(), n)
+        except EnvironmentError as e:
+            if e.errno not in recoverable_errors:
+                raise
+
+    @staticmethod
+    def _frames_iter_no_tty(socket):
+        """
+        Returns a generator of data read from the socket when the tty setting is
+        not enabled.
+
+        Taken from docker.utils.socket
+        """
+        while True:
+            (stream, n) = docker.utils.socket.next_frame_header(socket)
+            if n < 0:
+                break
+            while n > 0:
+                result = TimedContainer._read(socket, n)
+                if result is None:
+                    continue
+                data_length = len(result)
+                if data_length == 0:
+                    # We have reached EOF
+                    return
+                n -= data_length
+                yield result.decode()
+
+    @staticmethod
+    def _get_lines(strings: Iterator[str]) -> Iterator[str]:
         line = []
         for string in strings:
-            if string is None or string == "":
+            if string is None or string == b'' or string == "":
                 continue
-            string = str(string.decode())
             for char in string:
                 if char == "\r" or char == "\n":
                     if len(line) != 0:
@@ -153,52 +208,71 @@ class TimedContainer:
         if len(line) != 0:
             yield "".join(line)
 
+    def _add_timeout_exception(self, iterator):
+        yield from iterator
+
+        if self._timed_out:
+            raise ContainerTimedOutException(self)
+
+    def _add_stop(self, iterator):
+        yield from iterator
+
+        self.stop()
+
     @staticmethod
     def _is_script_valid(script_name: str):
-        script_name_rex = re.compile("^[a-zA-Z0-9_/]+\\.py$")
-        return os.path.exists("../sandbox/" + script_name) and script_name_rex.match(script_name) is not None
+        script_name_rex = re.compile("^[a-zA-Z0-9_/]*$")
+        return os.path.exists("../sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
 
-    def _run_unfiltered(self, script_name: str, extra_args: dict) -> Iterator[Message]:
+    def run(self, script_name: str, extra_args: dict) -> Connection:
         if extra_args is None:
             extra_args = dict()
 
         # Ensure that script is valid
         if not TimedContainer._is_script_valid(script_name):
-            yield self._error(MessageType.ERROR_INVALID_ENTRY_FILE)
-            return
+            raise InvalidEntryFile(script_name)
 
         # Get env vars
         env_vars = {**self._env_vars, **extra_args}
 
         # Start script
-        run_script_cmd = "./sandbox/run.sh '{path}'".format(path=script_name)
-        (exit_code, stream) = self._container.exec_run(cmd=run_script_cmd,
-                                                       user='sandbox',
-                                                       stream=True,
-                                                       environment=env_vars,
-                                                       workdir="/home/sandbox/")
+        run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
+        run_script_cmd = f"./sandbox/run.sh '{script_name}.py' {run_t}"
+        socket: SSLSocket
+        _, socket = self._container.exec_run(cmd=run_script_cmd,
+                                             user='sandbox',
+                                             stream=True,
+                                             socket=True,
+                                             stdin=True,
+                                             tty=False,
+                                             environment=env_vars,
+                                             workdir="/home/sandbox/")
 
-        # Process lines
-        lines = TimedContainer._get_lines(stream)
-        receiver = Receiver(lines)
-        iterator = receiver.get_messages_iterator()
-        yield from iterator
+        # Set up input to the container
+        def send_handler(m: str):
+            socket.write((m + "\n").encode())
 
-        yield from self._killed_messages
+        # Process output from the container
+        socket.settimeout(self.timeout)
+        strings = TimedContainer._frames_iter_no_tty(socket)
+        lines = TimedContainer._get_lines(strings)
+        received = self._add_stop(self._add_timeout_exception(lines))
+
+        return Connection(send_handler, received)
 
     @staticmethod
     def _is_submission_valid(submission_hash: str, submission_path: str):
         submission_hash_rex = re.compile("^[a-f0-9]+$")
         return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
 
-    def copy_submission(self, submission_hash: str, container_dir: str):
+    def _copy_submission(self, submission_hash: str):
         submission_path = f"/repositories/{submission_hash}.tar"
         # Ensure that submission is valid
         if not TimedContainer._is_submission_valid(submission_hash, submission_path):
-            return self._error(MessageType.ERROR_INVALID_SUBMISSION)
+            raise InvalidSubmissionError(submission_hash)
 
         # Make destination
-        dest_path = os.path.join("/home/sandbox/sandbox", container_dir)
+        dest_path = "/home/sandbox/submission"
         self._container.exec_run(f"mkdir {dest_path}", user='root')
 
         # Make required init file for python
@@ -209,33 +283,5 @@ class TimedContainer:
             data = f.read()
             self._container.put_archive(dest_path, data)
 
-    def run(self, script_name: str, extra_args=None) -> Iterator[Message]:
-        messages = self._run_unfiltered(script_name, extra_args)
-        yield from Message.filter_middle_ends_to_prints(messages)
-
     def __str__(self):
         return f"TimedContainer<{self._container}>"
-
-
-def run_in_sandbox(gamemode: gamemodes.Gamemode, submission_hashes=None, options=None) -> Iterator[Message]:
-    """runs the given script in a sandbox and returns a result list.
-    Each item in the list is of type 'Message' and is either output from the sandbox
-    or an error while trying to run the sandbox.
-    """
-    script_name = gamemode.script
-
-    if submission_hashes is None:
-        submission_hashes = []
-    if options is None:
-        options = dict()
-    logging.info("Request for script " + script_name)
-
-    option_args = gamemode.create_env_vars(**options)
-
-    timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
-    with TimedContainer(timeout) as container:
-        for i, submission_hash in enumerate(submission_hashes):
-            subdir = f"submission{i + 1}"
-            container.copy_submission(submission_hash, subdir)
-
-        yield from container.run(script_name, option_args)

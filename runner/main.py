@@ -8,6 +8,7 @@ from runner import sandbox, gamemodes
 import logging
 
 from runner.matchmaker import Matchmaker
+from shared.messages import Encoder
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")
@@ -32,10 +33,9 @@ def run():
         if v in options:
             del options[v]
 
-    messages = sandbox.run_in_sandbox(gamemode, submissions, options)
-    parsed = dict(gamemode.parse(messages))
+    parsed = gamemode.run(submissions, options)
 
-    return Response(json.dumps(parsed), status=200, mimetype='application/json')
+    return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
 
 
 def main():

@@ -1,30 +1,35 @@
 import json
-from typing import Iterator, List, Callable
+import random
+import time
+from typing import List, Callable
 
 import chess
-from cuwais.common import Outcome
+from cuwais.common import Outcome, Result
 
-from shared.messages import Message, MessageType
+from runner.middleware import Middleware, SubmissionNotActiveError
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.messages import Encoder
 
 
 class SingleResult(dict):
-    def __init__(self, outcome: Outcome, healthy: bool, player_id: str):
+    def __init__(self, outcome: Outcome, healthy: bool, player_id: str, result: Result, printed: str):
         self.outcome = outcome
         self.healthy = healthy
         self.player_id = player_id
+        self.result = result
+        printed = printed[:1000]
+        self.printed = printed
 
-        super().__init__(outcome=outcome.value, healthy=healthy, player_id=player_id)
+        super().__init__(outcome=outcome.value, healthy=healthy, player_id=player_id, result_code=str(result.value),
+                         printed=printed)
 
 
 class ParsedResult(dict):
-    def __init__(self, recording: dict, submission_results: List[SingleResult]):
-        recording["outcome_txt"] = recording.get("outcome_txt", "unknown")
-        recording["player_prints"] = recording.get("player_prints", [])
-        recording["player_prints"] = [[p[:1000] for p in player[:100]] for player in recording["player_prints"]]
-        self.recording = json.dumps(recording)
+    def __init__(self, moves: list, submission_results: List[SingleResult]):
+        self.recording = json.dumps(moves, cls=Encoder)
         self.submission_results = submission_results
 
-        super().__init__(recording=recording, submission_results=submission_results)
+        super().__init__(recording=moves, submission_results=submission_results)
 
     @property
     def outcomes(self):
@@ -54,133 +59,91 @@ class ParsedResult(dict):
             result.player_id = value
 
 
-def default_parser(messages: Iterator[Message]):
+def default_parser(middleware: Middleware) -> ParsedResult:
+    messages = middleware.complete_all()
     prints = []
-    results = []
-    end = None
-
-    for message in messages:
-        if message.message_type == MessageType.PRINT:
-            prints.append(message.data["str"])
-        elif message.message_type == MessageType.RESULT:
-            results.append(message.data)
-        elif message.message_type in Message.END_TYPES:
-            end = message
-
-    prints = "\n".join(prints)
-    end = dict(end)
-
-    record = {"printed": prints, "results": results, "end": end}
-    return ParsedResult(record, [])
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+    return ParsedResult(messages, [SingleResult(Outcome.Draw, True, "unknown", Result.ValidGame, pp) for pp in prints])
 
 
-def chess_parser(messages: Iterator[Message]):
-    prints = ([], [], [])
-    controller = -1  # -1 for host, 0 for player 0, 1 for player 1
+def info_parser(middleware: Middleware) -> ParsedResult:
+    middleware.send_data(0, array=[0, "test", 1, "2", None], kwarg1="hello", kwarg2=["list", "of", "things"])
+    messages = middleware.complete_all()
+    prints = []
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+    return ParsedResult(messages, [SingleResult(Outcome.Draw, True, "debug", Result.ValidGame, pp) for pp in prints])
+
+
+def play_chess(middleware: Middleware):
+    latency = [sum([middleware.ping(i) for _ in range(10)]) / 10 for i in range(2)]
+    print(f"latencies: {latency}", flush=True)
+
+    board = chess.Board.from_chess960_pos(random.randint(0, 959))
+    player_turn = 0
+    time_remaining = [10, 10]
     moves = []
-    initial_state = None
-    board = None
-    loser = -1
-    healths = [True, True]
-    outcome_txt = None
 
-    for message in messages:
-        if message.message_type == MessageType.PRINT:
-            prints[controller + 1].append(message.data["str"])
-        elif message.message_type == MessageType.RESULT:
-            result_type = message.data["type"]
-            player_turn = int(message.data["player_id"])
-            if result_type == "initial_board":
-                initial_state = message.data["board_state"]
-                board = chess.Board(initial_state, chess960=message.data["chess960"])
-                controller = -1
-            elif result_type == "ai_start":
-                controller = int(message.data["player_id"])
-            elif result_type == "ai_end":
-                controller = -1
-            elif result_type == "move":
-                move = message.data["move"]
-                moves.append(move)
-                move = chess.Move.from_uci(move)
-                if move not in board.legal_moves:
-                    loser = player_turn
-                    healths[player_turn] = False
-                    outcome_txt = "illegal-move"
-                    break
-                board.push(move)
-                if board.fen() != message.data["board_state"]:
-                    loser = player_turn
-                    healths[player_turn] = False
-                    outcome_txt = "illegal-board"
-                    break
-            elif result_type == "invalid_move":
-                loser = player_turn
-                healths[player_turn] = False
-                outcome_txt = "illegal-move"
-                break
-            elif result_type == "result":
-                result = message.data["result"]
-                if result == "loss":
-                    loser = player_turn
-                else:
-                    loser = -1
-                outcome_txt = message.data["reason"]
-                break
-            elif result_type == "missing_function":
-                loser = player_turn
-                healths[player_turn] = False
-                outcome_txt = "broken-entry-point"
-            else:
-                loser = -1
-                healths = [False, False]
-                outcome_txt = "unknown-result-type"
-                break
-        elif message.message_type in Message.ERROR_TYPES:
-            loser = controller
-            if controller >= 0:
-                healths[controller] = False
-            outcome_txt = {MessageType.ERROR_PROCESS_TIMEOUT: "timeout",
-                           MessageType.ERROR_INVALID_MESSAGE_TYPE: "invalid-message-type",
-                           MessageType.ERROR_INVALID_ATTACHED_KEY: "invalid-attached-key",
-                           MessageType.ERROR_INVALID_ENTRY_FILE: "invalid-entry-file",
-                           MessageType.ERROR_INVALID_NEW_KEY: "invalid-new-key",
-                           MessageType.ERROR_INVALID_SUBMISSION: "invalid-submission",
-                           MessageType.ERROR_PROCESS_KILLED: "process-killed",
-                           }[message.message_type]
-            break
+    def make_loss(p):
+        return Outcome.Loss if p == 0 else Outcome.Win, Outcome.Loss if p == 1 else Outcome.Win
 
-    # If a player was in control of the game and the game ended, that player probably caused a crash
-    if outcome_txt is None:
-        outcome_txt = "game-unfinished"
-        if controller != -1:
-            healths[controller] = False
-            loser = controller
+    while not board.is_game_over():
+        start_time = time.time_ns()
+        try:
+            move = middleware.call(player_turn, "make_move", board=board, time_remaining=time_remaining[player_turn])
+        except SubmissionNotActiveError:
+            return make_loss(player_turn), Result.ProcessKilled, moves
+        end_time = time.time_ns()
 
-    host_prints = "\n".join(prints[0])
-    player_prints = ["\n".join(prints[1]), "\n".join(prints[2])]
-    moves = ",".join(moves)
+        t = (end_time - start_time) / 1e9
+        t -= latency[player_turn]
+        time_remaining[player_turn] -= t
 
-    if loser == -1:  # Draw
-        outcome = [Outcome.Draw, Outcome.Draw]
-    elif loser == 0:  # White win
-        outcome = [Outcome.Loss, Outcome.Win]
-    else:  # Black win
-        outcome = [Outcome.Win, Outcome.Loss]
+        if time_remaining[player_turn] <= 0:
+            return make_loss(player_turn), Result.Timeout, moves
 
-    if board is None:
-        healths = [False, False]
-        final_board = None
-    else:
-        final_board = board.fen()
+        if isinstance(move, MissingFunctionError):
+            return make_loss(player_turn), Result.BrokenEntryPoint, moves
 
-    submission_results = [SingleResult(o, h, p) for o, h, p in zip(outcome, healths, ["white", "black"])]
+        if isinstance(move, ExceptionTraceback):
+            return make_loss(player_turn), Result.Exception, moves
 
-    record = {"host_prints": host_prints, "player_prints": player_prints, "initial_state": initial_state,
-              "moves": moves, "loser": loser, "outcome_txt": outcome_txt, "final_board": final_board}
-    return ParsedResult(record, submission_results)
+        if isinstance(move, str):
+            move = chess.Move.from_uci(move)
+
+        if move is None or not isinstance(move, chess.Move) or move not in board.legal_moves:
+            return make_loss(player_turn), Result.IllegalMove, moves
+
+        moves.append(move)
+        board.push(move)
+
+        player_turn = 1 - player_turn
+
+    if board.is_checkmate():
+        # Because we increment the player id, the losing player is always the current player
+        return make_loss(player_turn), Result.ValidGame, moves
+    elif board.is_stalemate() or board.is_insufficient_material() or board.is_seventyfive_moves():
+        return (Outcome.Draw, Outcome.Draw), Result.ValidGame, moves
+    return (Outcome.Draw, Outcome.Draw), Result.UnknownResultType, moves
 
 
-def get(parser) -> Callable[[Iterator[Message]], ParsedResult]:
+def chess_parser(middleware: Middleware) -> ParsedResult:
+    (outcome1, outcome2), result, moves = play_chess(middleware)
+
+    middleware.complete_all()
+    prints = []
+    for i in range(middleware.player_count):
+        prints.append(middleware.get_player_prints(i))
+
+    results = [SingleResult(outcome1, result == Result.ValidGame, "white", result, prints[0]),
+               SingleResult(outcome2, result == Result.ValidGame, "black", result, prints[1])]
+    return ParsedResult(moves, results)
+
+
+def get(parser) -> Callable[[Middleware], ParsedResult]:
+    if parser == "info":
+        return info_parser
     if parser == "chess":
         return chess_parser
 
