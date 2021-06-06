@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import re
 import tarfile
@@ -132,8 +133,8 @@ class TimedContainer:
 
     def _lock_down(self):
         # Set write limits
-        self._container.exec_run("chown -hvR root /home/sandbox/", user="root")
-        self._container.exec_run("chmod -R ugo-w /home/sandbox/", user="root")
+        logging.debug(self._container.exec_run("chown -hvR root /home/sandbox/", user="root"))
+        logging.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user="root"))
 
     def _timeout_method(self, timeout: int):
         try:
