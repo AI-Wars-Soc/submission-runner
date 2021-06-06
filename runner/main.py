@@ -1,12 +1,12 @@
+import json
+import logging
+
 import cuwais.database
 import flask
 from cuwais.config import config_file
 from flask import request, Response
-import json
 
-from runner import sandbox, gamemodes
-import logging
-
+from runner import gamemodes
 from runner.matchmaker import Matchmaker
 from shared.messages import Encoder
 

@@ -1,6 +1,5 @@
 import builtins
 import itertools
-import sys
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -83,12 +82,14 @@ def _input_receiver(input_function=None) -> Iterator[str]:
 
 
 class HandshakeFailedError(RuntimeError):
-    def __init__(self, prints):
+    def __init__(self, prints: Iterator[str]):
         self.prints = prints
         super().__init__()
 
 
 class Connection:
+    _in_stream: Iterator[Message]
+
     def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
@@ -115,7 +116,7 @@ class Connection:
             try:
                 message = next(self._in_stream)
             except StopIteration:
-                raise HandshakeFailedError(prints)
+                raise HandshakeFailedError([p.data for p in prints])
             if message.message_type == MessageType.NEW_KEY:
                 self._in_stream = itertools.chain(prints, self._in_stream)
                 return

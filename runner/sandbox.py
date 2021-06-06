@@ -3,9 +3,8 @@ import os
 import re
 import tarfile
 import threading
-import traceback
 from ssl import SSLSocket
-from typing import Iterator, Tuple, Any, Optional
+from typing import Iterator, Optional
 
 import docker
 import docker.errors
