@@ -3,8 +3,6 @@ services:
   submission-runner-docker:
     image: docker:dind
     privileged: true
-    expose:
-      - "2376"
     volumes:
       - "submission-runner-docker-certs:/certs/client"
       - "submission-runner-dind-data:/var/lib/docker"
