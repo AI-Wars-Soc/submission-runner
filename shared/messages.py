@@ -82,6 +82,12 @@ def _input_receiver(input_function=None) -> Iterator[str]:
         yield s
 
 
+class HandshakeFailedError(RuntimeError):
+    def __init__(self, prints):
+        self.prints = prints
+        super().__init__()
+
+
 class Connection:
     def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
         # Set up output
@@ -106,7 +112,10 @@ class Connection:
     def _handshake_in(self):
         prints = []
         while True:
-            message = next(self._in_stream)
+            try:
+                message = next(self._in_stream)
+            except StopIteration:
+                raise HandshakeFailedError(prints)
             if message.message_type == MessageType.NEW_KEY:
                 self._in_stream = itertools.chain(prints, self._in_stream)
                 return

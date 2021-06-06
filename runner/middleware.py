@@ -2,7 +2,7 @@ import time
 from typing import Any, Iterable
 
 from runner.sandbox import TimedContainer
-from shared.messages import MessageType
+from shared.messages import MessageType, HandshakeFailedError
 
 
 class SubmissionNotActiveError(RuntimeError):
@@ -46,9 +46,21 @@ class ContainerConnection:
         self._connection.send(MessageType.END)
 
 
+class ContainerConnectionFailedError(RuntimeError):
+    def __init__(self, i, prints):
+        super().__init__()
+        self.container_index = i
+        self.prints = prints
+
+
 class Middleware:
     def __init__(self, script_name: str, containers: Iterable[TimedContainer], env_vars):
-        self._connections = [ContainerConnection(script_name, container, env_vars) for container in containers]
+        self._connections = []
+        for i, container in enumerate(containers):
+            try:
+                self._connections.append(ContainerConnection(script_name, container, env_vars))
+            except HandshakeFailedError as e:
+                raise ContainerConnectionFailedError(i, e.prints)
 
     @property
     def player_count(self):

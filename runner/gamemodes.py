@@ -3,12 +3,14 @@ import logging
 import os
 from typing import Dict, Callable
 
+from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
 from runner import parsers
-from runner.middleware import Middleware
-from runner.parsers import ParsedResult
+from runner.middleware import Middleware, ContainerConnectionFailedError
+from runner.parsers import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
+from shared.messages import HandshakeFailedError
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -75,6 +77,11 @@ class Gamemode:
 
             # Run
             res = self.parse(middleware)
+        except ContainerConnectionFailedError as e:
+            each_res = [SingleResult(Outcome.Draw, False, "", Result.BrokenEntryPoint, "") for _ in submission_hashes]
+            each_res[e.container_index].printed = "\n".join(e.prints)
+
+            return ParsedResult([], each_res)
         finally:
             # Clean up
             for container in containers:
