@@ -18,6 +18,7 @@ from docker.models.containers import Container
 from shared.messages import Connection
 
 _client = docker.from_env()
+DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
 
 
 class InvalidEntryFile(RuntimeError):
@@ -91,11 +92,12 @@ class TimedContainer:
 
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
+        _client.images.pull(DOCKER_IMAGE_NAME)
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
         disk_limit = str(int(config_file.get("submission_runner.sandbox_disk_limit_megabytes"))) + "M"
         unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
         cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
-        return _client.containers.run("aiwarssoc/sandbox",
+        return _client.containers.run(DOCKER_IMAGE_NAME,
                                       detach=True,
                                       remove=True,
                                       mem_limit=mem_limit,

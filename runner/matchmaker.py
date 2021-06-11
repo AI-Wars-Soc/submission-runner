@@ -341,20 +341,21 @@ def _run_test_match(gamemode: gamemodes.Gamemode, options) -> bool:
 
 
 class Matchmaker(Thread):
-    def __init__(self, gamemode: gamemodes.Gamemode, options: dict, testing: bool, seconds_per_run: int):
+    def __init__(self, gamemode: gamemodes.Gamemode, options: dict, seconds_per_run: int):
         super().__init__()
         self.gamemode = gamemode
         self.options = options
-        self.testing = testing
         self.seconds_per_run = seconds_per_run
         self.daemon = True
 
     def _run_one(self) -> bool:
         try:
-            if self.testing:
-                return _run_test_match(self.gamemode, self.options)
-            else:
-                return _run_typical_match(self.gamemode, self.options)
+            # Prioritise running test matches
+            ran = _run_test_match(self.gamemode, self.options)
+            if ran:
+                return True
+
+            return _run_typical_match(self.gamemode, self.options)
         except Exception as e:
             logger.exception(e)
             return False
@@ -368,9 +369,11 @@ class Matchmaker(Thread):
             success = self._run_one()
             diff = (time.process_time_ns() - start) / 1e9
 
-            if not success:
-                time.sleep(random.randint(1, 2 * max(1, self.seconds_per_run)))  # Pause for a while on failure
+            wait_time = self.seconds_per_run - diff
 
-            jitter = 0.1 * self.seconds_per_run * (random.random() - 0.5)  # Pause for a while so we're not in sync
-            wait_time = max(0.0, self.seconds_per_run - diff + jitter)
-            time.sleep(wait_time)
+            if not success:
+                wait_time + random.randint(1, max(2, self.seconds_per_run))  # Pause for a while on failure
+
+            wait_time += 0.05 * self.seconds_per_run * (random.random() - 0.5)  # Pause for a while so we're not in sync
+
+            time.sleep(max(0.0, wait_time))

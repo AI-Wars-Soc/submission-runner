@@ -50,7 +50,7 @@ def main():
 
     # Start up matchmakers
     for i in range(matchmakers):
-        matchmaker = Matchmaker(gamemode, options, i == 0, seconds_per_run)
+        matchmaker = Matchmaker(gamemode, options, seconds_per_run)
         matchmaker.start()
 
     # Serve webpages
