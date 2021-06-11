@@ -120,8 +120,8 @@ class TimedContainer:
     @staticmethod
     def _compress_sandbox_files(fh):
         with tarfile.open(fileobj=fh, mode='w') as tar:
-            tar.add("../sandbox", arcname="sandbox")
-            tar.add("../shared", arcname="shared")
+            tar.add("./sandbox", arcname="sandbox")
+            tar.add("./shared", arcname="shared")
 
     def _copy_sandbox_scripts(self):
         with io.BytesIO() as fh:
@@ -222,7 +222,7 @@ class TimedContainer:
     @staticmethod
     def _is_script_valid(script_name: str):
         script_name_rex = re.compile("^[a-zA-Z0-9_/]*$")
-        return os.path.exists("../sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
+        return os.path.exists("./sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
 
     def run(self, script_name: str, extra_args: dict) -> Connection:
         if extra_args is None:
@@ -266,7 +266,7 @@ class TimedContainer:
         return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
 
     def _copy_submission(self, submission_hash: str):
-        submission_path = f"/repositories/{submission_hash}.tar"
+        submission_path = f"/home/subrunner/repositories/{submission_hash}.tar"
         # Ensure that submission is valid
         if not TimedContainer._is_submission_valid(submission_hash, submission_path):
             raise InvalidSubmissionError(submission_hash)

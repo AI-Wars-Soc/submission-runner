@@ -21,9 +21,9 @@ services:
       - "./runner:/home/subrunner/runner"
       - "./sandbox:/home/subrunner/sandbox"
       - "./shared:/home/subrunner/shared"
-      - "./tmp/repositories:/repositories"
+      - "./tmp/repositories:/home/subrunner/repositories:ro"
       - "submission-runner-docker-certs:/certs/client:ro"
-      - "./debug_config.yml:/home/subrunner/runner/config.yml:ro"
+      - "./debug_config.yml:/home/subrunner/config.yml:ro"
     networks:
       - database
       - submission-runner
@@ -44,8 +44,8 @@ services:
       - "80:8080"
     volumes:
       - "../front-end/server:/home/web_user/server"
-      - "./tmp/repositories:/repositories"
-      - "./debug_config.yml:/home/web_user/server/config.yml:ro"
+      - "./tmp/repositories:/home/web_user/repositories"
+      - "./debug_config.yml:/home/web_user/config.yml:ro"
     networks:
       - redis
       - database
