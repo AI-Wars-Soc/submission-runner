@@ -138,7 +138,11 @@ class Gamemode:
 
         player_turn = 0
 
-        latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
+        try:
+            latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
+        except SubmissionNotActiveError:
+            # Shouldn't crash, it's our fault if it does :(
+            return [Outcome.Draw] * self.player_count, Result.UnknownResultType, moves, initial_encoded_board
         latency = sum(latency) / len(latency)
         logger.debug(f"Latency for container communication: {latency}s")
 

@@ -33,7 +33,7 @@ def readable(path):
 
 
 def get_all_writable():
-    result = subprocess.run(["find", "/", "-writable"], stdout=subprocess.PIPE)
+    result = subprocess.run(["find", "/", "-writable"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return [path for path in result.stdout.decode().splitlines() if not path.endswith("Permission denied")]
 
 
@@ -54,7 +54,7 @@ def get_system_info():
         return e
 
 
-def write_until_full(path):
+def write_until_full(path, remove=False):
     mega = "a" * 1024 * 1024
     written = 0
     try:
@@ -71,10 +71,11 @@ def write_until_full(path):
     except Exception as e:
         return str(e)
     finally:
-        try:
-            os.remove(path)
-        except Exception as e:
-            pass
+        if remove:
+            try:
+                os.remove(path)
+            except Exception as e:
+                pass
     return "No Limit"
 
 

@@ -8,7 +8,7 @@ from typing import Iterator, Callable, Optional, Any
 
 import chess
 
-from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
 
 
 @unique
@@ -190,6 +190,7 @@ class Encoder(json.JSONEncoder):
         super().__init__(*args, **kwargs)
         self._encoders = {Message: Encoder._message,
                           MissingFunctionError: Encoder._missing_function_error,
+                          FailsafeError: Encoder._failsafe_error,
                           ExceptionTraceback: Encoder._exception_trace,
                           chess.Board: Encoder._chessboard,
                           chess.Move: Encoder._chess_move}
@@ -204,6 +205,11 @@ class Encoder(json.JSONEncoder):
     @staticmethod
     def _missing_function_error(e: MissingFunctionError):
         return {'__custom_type': 'missing_function_error',
+                'str': str(e)}
+
+    @staticmethod
+    def _failsafe_error(e: FailsafeError):
+        return {'__custom_type': 'failsafe_error',
                 'str': str(e)}
 
     @staticmethod
@@ -233,6 +239,7 @@ class Decoder(json.JSONDecoder):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
         self._decoders = {'message': Decoder._message,
                           'missing_function_error': Decoder._missing_function_error,
+                          'failsafe_error': Decoder._failsafe_error,
                           'exception_trace': Decoder._exception_trace,
                           'chessboard': Decoder._chessboard,
                           'chess_move': Decoder._chess_move}
@@ -244,6 +251,10 @@ class Decoder(json.JSONDecoder):
     @staticmethod
     def _missing_function_error(e: dict):
         return MissingFunctionError(e['str'])
+
+    @staticmethod
+    def _failsafe_error(e: dict):
+        return FailsafeError(e['str'])
 
     @staticmethod
     def _exception_trace(e: dict):

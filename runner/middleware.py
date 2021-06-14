@@ -1,7 +1,9 @@
 import time
 from typing import Any, Iterable
 
+from runner.logger import logger
 from runner.sandbox import TimedContainer
+from shared.exceptions import FailsafeError
 from shared.messages import MessageType, HandshakeFailedError
 
 
@@ -28,6 +30,9 @@ class ContainerConnection:
             if message.message_type == MessageType.PRINT:
                 self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
+                if isinstance(message.data, FailsafeError):
+                    logger.error(str(message.data))
+                    raise SubmissionNotActiveError()
                 return message.data
             elif message.message_type == MessageType.END:
                 self._done = True

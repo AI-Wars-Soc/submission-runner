@@ -1,10 +1,21 @@
 import builtins
+import os
 import sys
 import traceback
 
 from sandbox import player_import, info
-from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
 from shared.messages import MessageType, Connection
+
+
+def failsafes():
+    # Check nothing is writable
+    for path in info.get_all_writable():
+        is_dir = os.path.isdir(path)
+        if is_dir:
+            path = os.path.join(path, "/test.txt")
+        if info.write_until_full(path, remove=is_dir) == "No Limit":
+            raise FailsafeError("Writable directory/file: " + path)
 
 
 def call(method_name, method_args, method_kwargs):
@@ -35,6 +46,9 @@ def main():
     connection = Connection()
     in_stream = connection.receive
     instructions = get_instructions(in_stream)
+
+    # Check that we haven't got any security holes
+    failsafes()
 
     # Reduce things that can accidentally go wrong
     def fake_input(*args, **kwargs):
