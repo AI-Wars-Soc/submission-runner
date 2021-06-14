@@ -50,24 +50,26 @@ class TimedContainer:
         self.submission_hash = submission_hash
 
         # Create container
-        logger.debug("Creating container")
+        logger.debug(f"Creating container {self}")
         self._env_vars = TimedContainer._get_env_vars()
         self._container = TimedContainer._make_sandbox_container(self._env_vars)
 
         # Copy information
-        logger.debug("Copying scripts")
+        logger.debug(f"Copying scripts {self}")
         self._copy_sandbox_scripts()
+        logger.debug(f"Copying submission {self}")
         self._copy_submission(submission_hash)
+        logger.debug(f"Locking down {self}")
         self._lock_down()
 
         # Kill thread
         self._timeout = timeout
         self._timed_out = False
 
-        logger.debug("Done making timed container")
+        logger.debug(f"Done making timed container {self}")
 
     def _start_timer(self):
-        logger.debug("Creating kill thread")
+        logger.debug(f"Creating kill thread {self}")
         kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, self._timeout,))
         kill_thread.setDaemon(True)
         kill_thread.start()
@@ -154,14 +156,14 @@ class TimedContainer:
 
     def _lock_down(self):
         # Set write limits
-        logger.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/").output.decode())
+        self._container.exec_run("chmod -R ugo=rx /home/sandbox/")  # TODO: Very slow (~2s) because of CoW?
         # logger.debug(self._container.exec_run("ls -alR /home/sandbox").output.decode())
 
     def _timeout_method(self, timeout: int):
         try:
             self._container.wait(timeout=timeout)
         except requests.exceptions.ReadTimeout:
-            logger.debug("Killing thread due to timeout")
+            logger.debug(f"Killing thread due to timeout {self}")
             self._timed_out = True
             self.stop()
         except requests.exceptions.ConnectionError:
@@ -252,7 +254,7 @@ class TimedContainer:
         self._start_timer()
 
         # Start script
-        logger.debug("Running command in container")
+        logger.debug(f"Running command in container {self}")
         run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
         run_script_cmd = f"./sandbox/run.sh 'play.py' {run_t}"
         socket: SSLSocket
@@ -270,18 +272,16 @@ class TimedContainer:
             socket.write((m + "\n").encode())
 
         # Process output from the container
-        logger.debug("Setting up output processing")
+        logger.debug(f"Setting up output processing {self}")
         socket.settimeout(self.timeout)
         strings = TimedContainer._frames_iter_no_tty(socket)
         lines = TimedContainer._get_lines(strings)
         received = self._add_stop(self._add_timeout_exception(lines))
 
+        logger.debug(f"Connecting {self}")
         return Connection(send_handler, received)
 
     @staticmethod
     def _is_submission_valid(submission_hash: str, submission_path: str):
         submission_hash_rex = re.compile("^[a-f0-9]+$")
         return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
-
-    def __str__(self):
-        return f"TimedContainer<{self._container}>"
