@@ -2,7 +2,7 @@ import abc
 import logging
 import random
 import time
-from typing import List
+from typing import List, Tuple
 
 import chess
 from cuwais.common import Outcome, Result
@@ -69,6 +69,16 @@ class Gamemode:
         """Checks if the board is in a drawn position given the player just moved"""
         pass
 
+    @abc.abstractmethod
+    def _encode_move(self, move, player) -> str:
+        """Converts a move to a string form for storing or transmitting"""
+        pass
+
+    @abc.abstractmethod
+    def _encode_board(self, board) -> str:
+        """Converts a board to a string form for storing or transmitting"""
+        pass
+
     def run(self, submission_hashes=None, options=None, turns=2 << 32) -> ParsedResult:
         if submission_hashes is None:
             submission_hashes = []
@@ -84,11 +94,18 @@ class Gamemode:
                 container = TimedContainer(timeout, submission_hash)
                 containers.append(container)
 
-            # Set up linking through middleware
-            middleware = Middleware(containers)
+            try:
+                # Set up linking through middleware
+                middleware = Middleware(containers)
+            except ContainerConnectionFailedError as e:
+                each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
+                            for _ in range(self.player_count)]
+                each_res[e.container_index].printed = "\n".join(e.prints)
+
+                return ParsedResult("", [], each_res)
 
             # Run
-            outcomes, result, moves = self._run_loop(middleware, {**self._options, **options}, turns)
+            outcomes, result, moves, initial_board = self._run_loop(middleware, {**self._options, **options}, turns)
 
             # Gather
             middleware.complete_all()
@@ -99,12 +116,7 @@ class Gamemode:
             results = [SingleResult(outcome, result == Result.ValidGame, name, result, prints)
                        for outcome, name, prints in zip(outcomes, self._players, prints)]
 
-            parsed_result = ParsedResult(moves, results)
-        except ContainerConnectionFailedError as e:
-            each_res = [SingleResult(Outcome.Draw, False, "", Result.BrokenEntryPoint, "") for _ in submission_hashes]
-            each_res[e.container_index].printed = "\n".join(e.prints)
-
-            return ParsedResult([], each_res)
+            parsed_result = ParsedResult(initial_board, moves, results)
         finally:
             # Clean up
             for container in containers:
@@ -112,10 +124,11 @@ class Gamemode:
 
         return parsed_result
 
-    def _run_loop(self, middleware, options, turns):
+    def _run_loop(self, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
         moves = []
         time_remaining = [options["turn_time"]] * self.player_count
         board = self._setup(**options)
+        initial_encoded_board = self._encode_board(board)
 
         player_turn = 0
 
@@ -138,7 +151,7 @@ class Gamemode:
                 move = middleware.call(player_turn, "make_move", board=self._filter_board(board, player_turn),
                                        time_remaining=time_remaining[player_turn])
             except SubmissionNotActiveError:
-                return make_loss(player_turn), Result.ProcessKilled, moves
+                return make_loss(player_turn), Result.ProcessKilled, moves, initial_encoded_board
             end_time = time.time_ns()
 
             t = (end_time - start_time) / 1e9
@@ -146,33 +159,35 @@ class Gamemode:
             time_remaining[player_turn] -= t
 
             if time_remaining[player_turn] <= 0:
-                return make_loss(player_turn), Result.Timeout, moves
+                return make_loss(player_turn), Result.Timeout, moves, initial_encoded_board
 
             if isinstance(move, MissingFunctionError):
-                return make_loss(player_turn), Result.BrokenEntryPoint, moves
+                return make_loss(player_turn), Result.BrokenEntryPoint, moves, initial_encoded_board
 
             if isinstance(move, ExceptionTraceback):
-                return make_loss(player_turn), Result.Exception, moves
+                return make_loss(player_turn), Result.Exception, moves, initial_encoded_board
 
             move = self._parse_move(move)
 
             if not self._is_move_legal(board, move):
-                return make_loss(player_turn), Result.IllegalMove, moves
+                return make_loss(player_turn), Result.IllegalMove, moves, initial_encoded_board
 
-            moves.append(move)
+            moves.append(self._encode_move(move, player_turn))
             board = self._apply_move(board, move)
 
             if self._is_win(board, player_turn):
-                return make_win(player_turn), Result.ValidGame, moves
+                return make_win(player_turn), Result.ValidGame, moves, initial_encoded_board
 
             if self._is_loss(board, player_turn):
-                return make_loss(player_turn), Result.ValidGame, moves
+                return make_loss(player_turn), Result.ValidGame, moves, initial_encoded_board
 
             if self._is_draw(board, player_turn):
-                return [Outcome.Draw] * self.player_count, Result.ValidGame, moves
+                return [Outcome.Draw] * self.player_count, Result.ValidGame, moves, initial_encoded_board
 
             player_turn += 1
             player_turn %= self.player_count
+
+        return [Outcome.Draw] * self.player_count, Result.GameUnfinished, moves, initial_encoded_board
 
     @staticmethod
     def get(gamemode_name):
@@ -212,6 +227,12 @@ class ChessGamemode(Gamemode):
             return False
         return True
 
-    def _apply_move(self, board: chess.Board, move):
+    def _apply_move(self, board: chess.Board, move: chess.Move):
         board.push(move)
         return board
+
+    def _encode_move(self, move: chess.Move, player: int) -> str:
+        return move.uci()
+
+    def _encode_board(self, board: chess.Board) -> str:
+        return board.fen()
