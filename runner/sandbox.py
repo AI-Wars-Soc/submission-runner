@@ -99,7 +99,7 @@ class TimedContainer:
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
-        disk_limit = str(int(config_file.get("submission_runner.sandbox_disk_limit_megabytes"))) + "M"
+        disk_limit = str(min(64, int(config_file.get("submission_runner.sandbox_disk_limit_megabytes")))) + "M"
         unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
         cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
         return _client.containers.run(DOCKER_IMAGE_NAME,
@@ -138,10 +138,28 @@ class TimedContainer:
             # Send
             self._container.put_archive("/home/sandbox/", fh.getvalue())
 
+    def _copy_submission(self, submission_hash: str):
+        submission_path = f"/home/subrunner/repositories/{submission_hash}.tar"
+        # Ensure that submission is valid
+        if not TimedContainer._is_submission_valid(submission_hash, submission_path):
+            raise InvalidSubmissionError(submission_hash)
+
+        # Make destination
+        dest_path = "/home/sandbox/submission"
+        self._container.exec_run(f"mkdir {dest_path}", user='root')
+
+        # Make required init file for python
+        init_path = os.path.join(dest_path, "__init__.py")
+        self._container.exec_run(f"touch {init_path}", user='root')
+
+        with open(submission_path, 'rb') as f:
+            data = f.read()
+            self._container.put_archive(dest_path, data)
+
     def _lock_down(self):
         # Set write limits
-        logger.debug(self._container.exec_run("chown -hvR root /home/sandbox/", user="root"))
-        logger.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user="root"))
+        logger.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/").output.decode())
+        logger.debug(self._container.exec_run("ls -alR /home/sandbox").output.decode())
 
     def _timeout_method(self, timeout: int):
         try:
@@ -238,7 +256,7 @@ class TimedContainer:
         run_script_cmd = f"./sandbox/run.sh 'play.py' {run_t}"
         socket: SSLSocket
         _, socket = self._container.exec_run(cmd=run_script_cmd,
-                                             user='sandbox',
+                                             user='read_only_user',
                                              stream=True,
                                              socket=True,
                                              stdin=True,
@@ -263,24 +281,6 @@ class TimedContainer:
     def _is_submission_valid(submission_hash: str, submission_path: str):
         submission_hash_rex = re.compile("^[a-f0-9]+$")
         return os.path.exists(submission_path) and submission_hash_rex.match(submission_hash) is not None
-
-    def _copy_submission(self, submission_hash: str):
-        submission_path = f"/home/subrunner/repositories/{submission_hash}.tar"
-        # Ensure that submission is valid
-        if not TimedContainer._is_submission_valid(submission_hash, submission_path):
-            raise InvalidSubmissionError(submission_hash)
-
-        # Make destination
-        dest_path = "/home/sandbox/submission"
-        self._container.exec_run(f"mkdir {dest_path}", user='root')
-
-        # Make required init file for python
-        init_path = os.path.join(dest_path, "__init__.py")
-        self._container.exec_run(f"touch {init_path}", user='root')
-
-        with open(submission_path, 'rb') as f:
-            data = f.read()
-            self._container.put_archive(dest_path, data)
 
     def __str__(self):
         return f"TimedContainer<{self._container}>"
