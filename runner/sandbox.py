@@ -1,5 +1,4 @@
 import io
-import logging
 import os
 import re
 import tarfile
@@ -15,10 +14,12 @@ import requests
 from cuwais.config import config_file
 from docker.models.containers import Container
 
+from runner.logger import logger
 from shared.messages import Connection
 
-_client = docker.from_env()
 DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
+_client = docker.from_env()
+_client.images.pull(DOCKER_IMAGE_NAME)
 
 
 class InvalidEntryFile(RuntimeError):
@@ -49,20 +50,25 @@ class TimedContainer:
         self.submission_hash = submission_hash
 
         # Create container
+        logger.debug("Creating container")
         self._env_vars = TimedContainer._get_env_vars()
         self._container = TimedContainer._make_sandbox_container(self._env_vars)
 
         # Copy information
+        logger.debug("Copying scripts")
         self._copy_sandbox_scripts()
         self._copy_submission(submission_hash)
         self._lock_down()
 
         # Create kill thread
+        logger.debug("Creating kill thread")
         self._kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, timeout,))
         self._kill_thread.setDaemon(True)
         self._kill_thread.start()
         self._timed_out = False
         self._stopped = False
+
+        logger.debug("Done making timed container")
 
     def stop(self):
         self._stopped = True
@@ -92,7 +98,6 @@ class TimedContainer:
 
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
-        _client.images.pull(DOCKER_IMAGE_NAME)
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
         disk_limit = str(int(config_file.get("submission_runner.sandbox_disk_limit_megabytes"))) + "M"
         unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
@@ -135,8 +140,8 @@ class TimedContainer:
 
     def _lock_down(self):
         # Set write limits
-        logging.debug(self._container.exec_run("chown -hvR root /home/sandbox/", user="root"))
-        logging.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user="root"))
+        logger.debug(self._container.exec_run("chown -hvR root /home/sandbox/", user="root"))
+        logger.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/", user="root"))
 
     def _timeout_method(self, timeout: int):
         try:
@@ -228,6 +233,7 @@ class TimedContainer:
 
     def run(self) -> Connection:
         # Start script
+        logger.debug("Running command in container")
         run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
         run_script_cmd = f"./sandbox/run.sh 'play.py' {run_t}"
         socket: SSLSocket
@@ -245,6 +251,7 @@ class TimedContainer:
             socket.write((m + "\n").encode())
 
         # Process output from the container
+        logger.debug("Setting up output processing")
         socket.settimeout(self.timeout)
         strings = TimedContainer._frames_iter_no_tty(socket)
         lines = TimedContainer._get_lines(strings)

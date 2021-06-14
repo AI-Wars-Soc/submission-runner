@@ -1,10 +1,10 @@
 import json
-import logging
 
 import cuwais.database
 import flask
 from cuwais.config import config_file
 from flask import request, Response, abort
+from werkzeug.middleware.profiler import ProfilerMiddleware
 
 from runner import gamemodes
 from runner.matchmaker import Matchmaker
@@ -13,12 +13,14 @@ from shared.messages import Encoder
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")
 
-logging.basicConfig(level=logging.DEBUG if app.config["DEBUG"] else logging.WARNING)
+if app.config["DEBUG"]:
+    app.config['PROFILE'] = config_file.get("profile")
+    app.wsgi_app = ProfilerMiddleware(app.wsgi_app, restrictions=[30])
 
 
 @app.route('/run', methods=['GET'])
 def run():
-    gamemode_name = str(request.args.get("gamemode", "info"))
+    gamemode_name = str(request.args.get("gamemode", "chess"))
     gamemode = gamemodes.Gamemode.get(gamemode_name)
 
     if gamemode is None:
@@ -31,21 +33,14 @@ def run():
         return Response(str({"error": f"Expected {gamemode.players} submissions, got {len(submissions)}"}),
                         status=400, mimetype='application/json')
 
+    moves = int(request.args.get("moves", 2 << 32))
+
     options = dict(request.args)
-    for v in ["gamemode", "submissions"]:
+    for v in ["gamemode", "submissions", "moves"]:
         if v in options:
             del options[v]
 
-    parsed = gamemode.run(submissions, options)
-
-    return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
-
-
-@app.route('/single_move/<submission_id>', methods=['GET'])
-def single_move(submission_id):
-    gamemode = gamemodes.Gamemode.get(config_file.get("gamemode.id"))
-
-    parsed = gamemode.run(submission_id, config_file.get("gamemode.options"), 1)
+    parsed = gamemode.run(submissions, options, moves)
 
     return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
 

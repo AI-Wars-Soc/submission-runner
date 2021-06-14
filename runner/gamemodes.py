@@ -1,5 +1,4 @@
 import abc
-import logging
 import random
 import time
 from typing import List, Tuple
@@ -8,6 +7,7 @@ import chess
 from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
+from runner.logger import logger
 from runner.middleware import Middleware, ContainerConnectionFailedError, SubmissionNotActiveError
 from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
@@ -84,16 +84,18 @@ class Gamemode:
             submission_hashes = []
         if options is None:
             options = dict()
-        logging.info("Request for gamemode " + self._name)
+        logger.debug(f"Request for gamemode {self._name}")
 
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
         containers = []
         try:
+            logger.debug("Creating all required timed containers: ")
             for submission_hash in submission_hashes:
                 container = TimedContainer(timeout, submission_hash)
                 containers.append(container)
 
+            logger.debug("Attaching middleware: ")
             try:
                 # Set up linking through middleware
                 middleware = Middleware(containers)
@@ -102,12 +104,15 @@ class Gamemode:
                             for _ in range(self.player_count)]
                 each_res[e.container_index].printed = "\n".join(e.prints)
 
+                logger.error("Failed to handshake with container!")
                 return ParsedResult("", [], each_res)
 
             # Run
+            logger.debug("Running...")
             outcomes, result, moves, initial_board = self._run_loop(middleware, {**self._options, **options}, turns)
 
             # Gather
+            logger.debug("Completed game, shutting down containers...")
             middleware.complete_all()
             prints = []
             for i in range(self.player_count):
@@ -122,6 +127,7 @@ class Gamemode:
             for container in containers:
                 container.stop()
 
+        logger.debug(f"Done running gamemode {self._name}!")
         return parsed_result
 
     def _run_loop(self, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
@@ -134,6 +140,7 @@ class Gamemode:
 
         latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
         latency = sum(latency) / len(latency)
+        logger.debug(f"Latency for container communication: {latency}s")
 
         def make_win(winner):
             res = [Outcome.Loss] * self.player_count
