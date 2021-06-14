@@ -54,19 +54,20 @@ def get_system_info():
         return e
 
 
+MEGABYTE = "a" * 1024 * 1024
+
+
 def write_until_full(path, remove=False):
-    mega = "a" * 1024 * 1024
     written = 0
     try:
         with open(path, "w") as f:
-            for i in range(128):
-                f.write(mega)
+            for i in range(16):
+                f.write(MEGABYTE)
                 f.flush()
                 written += 1024 * 1024
     except PermissionError:
         return "Not writable"
     except IOError as e:
-        print(e)
         return f"{written / (1024 * 1024)}MB"
     except Exception as e:
         return str(e)

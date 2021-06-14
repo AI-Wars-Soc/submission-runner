@@ -1,17 +1,19 @@
 import abc
 import random
 import time
-from typing import List, Tuple
+from concurrent.futures.thread import ThreadPoolExecutor
+from typing import List, Tuple, Union
 
 import chess
 from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
 from runner.logger import logger
-from runner.middleware import Middleware, ContainerConnectionFailedError, SubmissionNotActiveError
+from runner.middleware import Middleware, SubmissionNotActiveError, ContainerConnection
 from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer, ContainerTimedOutException
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.messages import HandshakeFailedError
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -82,30 +84,46 @@ class Gamemode:
     def run(self, submission_hashes=None, options=None, turns=2 << 32) -> ParsedResult:
         if submission_hashes is None:
             submission_hashes = []
+        submission_hashes = list(submission_hashes)
         if options is None:
             options = dict()
         logger.debug(f"Request for gamemode {self._name}")
 
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
+
+        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, ContainerConnection]]:
+            new_container = TimedContainer(timeout, submission_hash)
+            try:
+                new_connection = ContainerConnection(new_container)
+            except HandshakeFailedError as e:
+                each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
+                            for _ in range(self.player_count)]
+                for i_hash, h in enumerate(submission_hashes):
+                    if h == submission_hash:
+                        each_res[i_hash].printed = "\n".join(e.prints)
+
+                logger.error("Failed to handshake with container!")
+                return None, ParsedResult("", [], each_res)
+            new_connection.ping()
+            return new_container, new_connection
+
         containers = []
         try:
             logger.debug("Creating all required timed containers: ")
-            for submission_hash in submission_hashes:
-                container = TimedContainer(timeout, submission_hash)
+
+            # Create a mapping of submission hashes to connections
+            executor = ThreadPoolExecutor(max_workers=len(submission_hashes))
+            connections = []
+            for container, connection in executor.map(connect, submission_hashes):
+                if container is None:
+                    return connection
                 containers.append(container)
+                connections.append(connection)
 
+            # Set up linking through middleware
             logger.debug("Attaching middleware: ")
-            try:
-                # Set up linking through middleware
-                middleware = Middleware(containers)
-            except ContainerConnectionFailedError as e:
-                each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
-                            for _ in range(self.player_count)]
-                each_res[e.container_index].printed = "\n".join(e.prints)
-
-                logger.error("Failed to handshake with container!")
-                return ParsedResult("", [], each_res)
+            middleware = Middleware(connections)
 
             # Run
             logger.debug("Running...")
@@ -139,6 +157,7 @@ class Gamemode:
         player_turn = 0
 
         try:
+            # Calculate latencies
             latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
         except (SubmissionNotActiveError, ContainerTimedOutException):
             # Shouldn't crash, it's our fault if it does :(

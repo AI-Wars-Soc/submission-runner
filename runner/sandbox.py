@@ -88,13 +88,13 @@ class TimedContainer:
     def _get_env_vars() -> dict:
         env_vars = dict()
         env_vars['PYTHONPATH'] = "/home/sandbox/"
+        env_vars['DEBUG'] = str(config_file.get("debug"))
 
         return env_vars
 
     @staticmethod
     def _make_sandbox_container(env_vars) -> Container:
         mem_limit = str(config_file.get("submission_runner.sandbox_memory_limit"))
-        disk_limit = str(min(64, int(config_file.get("submission_runner.sandbox_disk_limit_megabytes")))) + "M"
         unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
         cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
         return _client.containers.run(DOCKER_IMAGE_NAME,
@@ -113,8 +113,9 @@ class TimedContainer:
                                       command=f"sh -c 'sleep {unrun_t}'",
                                       user='sandbox',
                                       tmpfs={
-                                          '/tmp': f'size={disk_limit}',
-                                          '/var/tmp': f'size={disk_limit}',
+                                          '/tmp': f'size=1M',
+                                          '/var/tmp': f'size=1M',
+                                          '/dev/shm': f'size=1M',
                                           '/run/lock': f'size=1M',
                                           '/var/lock': f'size=1M'
                                       })
@@ -154,7 +155,7 @@ class TimedContainer:
     def _lock_down(self):
         # Set write limits
         logger.debug(self._container.exec_run("chmod -R ugo=rx /home/sandbox/").output.decode())
-        logger.debug(self._container.exec_run("ls -alR /home/sandbox").output.decode())
+        # logger.debug(self._container.exec_run("ls -alR /home/sandbox").output.decode())
 
     def _timeout_method(self, timeout: int):
         try:
