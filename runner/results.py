@@ -30,6 +30,18 @@ class ParsedResult(dict):
     def outcomes(self):
         return [r.outcome for r in self._submission_results]
 
+    @property
+    def recording(self):
+        return self._recording
+
+    @property
+    def submission_results(self):
+        return self._submission_results
+
+    @property
+    def count(self):
+        return len(self._submission_results)
+
     @outcomes.setter
     def outcomes(self, values):
         for value, result in zip(values, self._submission_results):

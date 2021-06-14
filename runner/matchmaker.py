@@ -14,7 +14,7 @@ from cuwais.database import Submission, Result, Match
 from sqlalchemy import func, and_
 
 from runner import gamemodes
-from runner.results import ParsedResult, SingleResult
+from runner.results import ParsedResult
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ def _calculate_delta_scores_pair(a_score, b_score, winner_weight):
     return delta
 
 
-def _calculate_delta_scores(results: List[SingleResult], current_elos: List[float]):
+def _calculate_delta_scores(outcomes: List[Outcome], current_elos: List[float]):
     """
     Calculates a set of Elo deltas for a collection of results for submissions with current estimated Elos
 
@@ -149,10 +149,10 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
     counts = {o: 0 for o in Outcome}
     totals = {o: 0 for o in Outcome}
     group_elos = {o: [] for o in Outcome}
-    for result, elo in zip(results, current_elos):
-        counts[result.outcome] += 1
-        totals[result.outcome] += elo
-        group_elos[result.outcome].append(elo)
+    for outcome, elo in zip(outcomes, current_elos):
+        counts[outcome] += 1
+        totals[outcome] += elo
+        group_elos[outcome].append(elo)
 
     # Inter-Group deltas
     win_loss = 0
@@ -180,12 +180,12 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
 
     # Player deltas
     deltas = []
-    for result, elo in zip(results, current_elos):
+    for outcome, elo in zip(outcomes, current_elos):
         # Inter-Group portion
-        if result.outcome == Outcome.Win:
+        if outcome == Outcome.Win:
             delta = win_loss + win_draw
             delta /= counts[Outcome.Win]
-        elif result.outcome == Outcome.Loss:
+        elif outcome == Outcome.Loss:
             delta = -win_loss - loss_draw
             delta /= counts[Outcome.Loss]
         else:  # result.outcome == Outcome.Draw
@@ -193,7 +193,7 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
             delta /= counts[Outcome.Draw]
 
         # Intra-Group portion for single team result sets
-        if result.outcome == single_team_outcome:
+        if outcome == single_team_outcome:
             position_in_team = single_team_elos.index(elo)
             opponent_position = len(single_team_elos) - position_in_team - 1
             opponent_elo = single_team_elos[opponent_position]
@@ -203,18 +203,18 @@ def _calculate_delta_scores(results: List[SingleResult], current_elos: List[floa
 
         deltas.append(delta)
 
-    logger.debug(f"Calculated some ELO Deltas: {deltas}, winners: {[r.outcome for r in results]}")
+    logger.debug(f"Calculated some ELO Deltas: {deltas}, winners: {outcomes}")
 
     # Assertions
-    assert len(deltas) == len(results)
+    assert len(deltas) == len(outcomes)
     assert -0.000001 < sum(deltas) < 0.000001
     # Check that this works the same as Elo for two player games
-    if len(results) == 2:
-        if results[0].outcome == results[1].outcome == Outcome.Draw:
+    if len(outcomes) == 2:
+        if outcomes[0] == outcomes[1] == Outcome.Draw:
             exp_delta = _calculate_delta_scores_pair(min(current_elos), max(current_elos), 0.5)
             assert math.isclose(max(deltas), exp_delta, rel_tol=1e-9, abs_tol=0.0)
-        if results[0].outcome != results[1].outcome:
-            v = 1 if results[0].outcome == Outcome.Win else 0
+        if outcomes[0] != outcomes[1]:
+            v = 1 if outcomes[0] == Outcome.Win else 0
             exp_delta = _calculate_delta_scores_pair(current_elos[0], current_elos[1], v)
             assert math.isclose(deltas[0], exp_delta, rel_tol=1e-9, abs_tol=0.0)
 
@@ -255,13 +255,13 @@ def _save_result(submissions: List[Submission],
                  update_scores: bool) -> Match:
     logger.debug(f"Saving result: submissions: {submissions}, result: {result}")
     submission_ids = [submission.id for submission in submissions]
-    if not len(submission_ids) == len(result.submission_results):
+    if not len(submission_ids) == result.count:
         raise ValueError("Bad submission ID count")
 
     deltas = [0] * len(submission_ids)
     if update_scores:
         elos = _get_elos(submission_ids)
-        deltas = _calculate_delta_scores(result.submission_results, elos)
+        deltas = _calculate_delta_scores(result.outcomes, elos)
 
     with cuwais.database.create_session() as database_session:
         match = Match(match_date=datetime.now(tz=timezone.utc), recording=result.recording)
