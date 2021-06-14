@@ -1,16 +1,17 @@
-import json
+import abc
 import logging
-import os
-from typing import Dict, Callable
+import random
+import time
+from typing import List
 
+import chess
 from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
-from runner import parsers
-from runner.middleware import Middleware, ContainerConnectionFailedError
-from runner.parsers import ParsedResult, SingleResult
+from runner.middleware import Middleware, ContainerConnectionFailedError, SubmissionNotActiveError
+from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
-from shared.messages import HandshakeFailedError
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -21,47 +22,59 @@ _type_names = {
 
 
 class Gamemode:
-    def __init__(self, name, script, parser: Callable[[Middleware], ParsedResult], players, options):
-        self.name = str(name)
-        self.script = str(script)
-        self.parse = parsers.get(parser)
-        self.players = int(players)
-        self.options = dict(options)
+    def __init__(self, name: str, players: List[str], options: dict):
+        self._name = str(name)
+        self._players = list(players)
+        self._options = {"turn_time": 10, **dict(options)}
 
-    @staticmethod
-    def get(name):
-        return _gamemodes[name]
+    @property
+    def player_count(self):
+        return len(self._players)
 
-    def create_env_vars(self, **kwargs) -> Dict[str, str]:
-        possible_parameters = {k for k in self.options.keys()}
-        required_parameters = {k for k in possible_parameters if "default" not in self.options[k]}
+    @abc.abstractmethod
+    def _setup(self, **options):
+        """Gets the board that will be used by a game instance"""
+        pass
 
-        extras = {k for k in kwargs.keys() if k not in possible_parameters}
-        if len(extras) != 0:
-            raise TypeError(f"Unknown parameter(s): {', '.join(extras)}")
+    def _filter_board(self, board, player: int):
+        """Used to hide parts of the board, or transform the board into a form used by the player given"""
+        return board
 
-        missing = {k for k in required_parameters if k not in kwargs.keys()}
-        if len(extras) != 0:
-            raise TypeError(f"Missing parameter(s): {', '.join(missing)}")
+    def _parse_move(self, move):
+        """Optionally used to parse the returned move, eg if the AI can return a string or an object"""
+        return move
 
-        env_vars = {}
-        for key, data in self.options.items():
-            if key in kwargs:
-                env_vars[key] = kwargs[key]
-            else:
-                env_vars[key] = data["default"]
+    @abc.abstractmethod
+    def _is_move_legal(self, board, move) -> bool:
+        """Checks if a move can be made with a given board"""
+        pass
 
-            target_type = _type_names[data["type"]]
-            env_vars[key] = str(target_type(env_vars[key]))
+    @abc.abstractmethod
+    def _apply_move(self, board, move):
+        """Applies the move to the board and returns the new board"""
+        pass
 
-        return env_vars
+    @abc.abstractmethod
+    def _is_win(self, board, player):
+        """Checks if the board is in a won position given the player just moved"""
+        pass
 
-    def run(self, submission_hashes=None, options=None) -> ParsedResult:
+    @abc.abstractmethod
+    def _is_loss(self, board, player):
+        """Checks if the board is in a lost position given the player just moved"""
+        pass
+
+    @abc.abstractmethod
+    def _is_draw(self, board, player):
+        """Checks if the board is in a drawn position given the player just moved"""
+        pass
+
+    def run(self, submission_hashes=None, options=None, turns=2 << 32) -> ParsedResult:
         if submission_hashes is None:
             submission_hashes = []
         if options is None:
             options = dict()
-        logging.info("Request for gamemode " + self.name)
+        logging.info("Request for gamemode " + self._name)
 
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
@@ -72,11 +85,21 @@ class Gamemode:
                 containers.append(container)
 
             # Set up linking through middleware
-            env_vars = self.create_env_vars(**options)
-            middleware = Middleware(self.script, containers, env_vars)
+            middleware = Middleware(containers)
 
             # Run
-            res = self.parse(middleware)
+            outcomes, result, moves = self._run_loop(middleware, {**self._options, **options}, turns)
+
+            # Gather
+            middleware.complete_all()
+            prints = []
+            for i in range(self.player_count):
+                prints.append(middleware.get_player_prints(i))
+
+            results = [SingleResult(outcome, result == Result.ValidGame, name, result, prints)
+                       for outcome, name, prints in zip(outcomes, self._players, prints)]
+
+            parsed_result = ParsedResult(moves, results)
         except ContainerConnectionFailedError as e:
             each_res = [SingleResult(Outcome.Draw, False, "", Result.BrokenEntryPoint, "") for _ in submission_hashes]
             each_res[e.container_index].printed = "\n".join(e.prints)
@@ -87,20 +110,108 @@ class Gamemode:
             for container in containers:
                 container.stop()
 
-        return res
+        return parsed_result
+
+    def _run_loop(self, middleware, options, turns):
+        moves = []
+        time_remaining = [options["turn_time"]] * self.player_count
+        board = self._setup(**options)
+
+        player_turn = 0
+
+        latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
+        latency = sum(latency) / len(latency)
+
+        def make_win(winner):
+            res = [Outcome.Loss] * self.player_count
+            res[winner] = Outcome.Win
+            return res
+
+        def make_loss(loser):
+            res = [Outcome.Win] * self.player_count
+            res[loser] = Outcome.Loss
+            return res
+
+        for _ in range(turns):
+            start_time = time.time_ns()
+            try:
+                move = middleware.call(player_turn, "make_move", board=self._filter_board(board, player_turn),
+                                       time_remaining=time_remaining[player_turn])
+            except SubmissionNotActiveError:
+                return make_loss(player_turn), Result.ProcessKilled, moves
+            end_time = time.time_ns()
+
+            t = (end_time - start_time) / 1e9
+            t -= latency
+            time_remaining[player_turn] -= t
+
+            if time_remaining[player_turn] <= 0:
+                return make_loss(player_turn), Result.Timeout, moves
+
+            if isinstance(move, MissingFunctionError):
+                return make_loss(player_turn), Result.BrokenEntryPoint, moves
+
+            if isinstance(move, ExceptionTraceback):
+                return make_loss(player_turn), Result.Exception, moves
+
+            move = self._parse_move(move)
+
+            if not self._is_move_legal(board, move):
+                return make_loss(player_turn), Result.IllegalMove, moves
+
+            moves.append(move)
+            board = self._apply_move(board, move)
+
+            if self._is_win(board, player_turn):
+                return make_win(player_turn), Result.ValidGame, moves
+
+            if self._is_loss(board, player_turn):
+                return make_loss(player_turn), Result.ValidGame, moves
+
+            if self._is_draw(board, player_turn):
+                return [Outcome.Draw] * self.player_count, Result.ValidGame, moves
+
+            player_turn += 1
+            player_turn %= self.player_count
+
+    @staticmethod
+    def get(gamemode_name):
+        return {"chess": ChessGamemode()}.get(gamemode_name, None)
 
 
-def _parse():
-    script_dir = os.path.dirname(__file__)
-    rel_path = "gamemodes.json"
-    abs_file_path = os.path.join(script_dir, rel_path)
+class ChessGamemode(Gamemode):
+    def __init__(self):
+        super(ChessGamemode, self).__init__(name="chess", players=["white", "black"], options={"chess_960": True})
 
-    with open(abs_file_path, "r") as fp:
-        data = json.load(fp)
+    def _setup(self, chess_960, **kwargs):
+        if chess_960:
+            return chess.Board.from_chess960_pos(random.randint(0, 959))
 
-    for name, info in data.items():
-        yield Gamemode(name, info["script"], info.get("parser", "default"),
-                       info["players"], info.get("options", dict()))
+        return chess.Board()
 
+    def _is_win(self, board, move):
+        return board.is_checkmate()
 
-_gamemodes = {gm.name: gm for gm in _parse()}
+    def _is_draw(self, board, move):
+        return board.is_stalemate() or board.is_insufficient_material() or board.is_seventyfive_moves()
+
+    def _is_loss(self, board, move):
+        return False
+
+    def _parse_move(self, move):
+        if isinstance(move, str):
+            move = chess.Move.from_uci(move)
+        return move
+
+    def _is_move_legal(self, board, move):
+        if move is None:
+            return False
+        if not isinstance(move, chess.Move):
+            return False
+        if move not in board.legal_moves:
+            return False
+        return True
+
+    def _apply_move(self, board: chess.Board, move):
+        board.push(move)
+        return board

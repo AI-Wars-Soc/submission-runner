@@ -226,20 +226,10 @@ class TimedContainer:
         script_name_rex = re.compile("^[a-zA-Z0-9_/]*$")
         return os.path.exists("./sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
 
-    def run(self, script_name: str, extra_args: dict) -> Connection:
-        if extra_args is None:
-            extra_args = dict()
-
-        # Ensure that script is valid
-        if not TimedContainer._is_script_valid(script_name):
-            raise InvalidEntryFile(script_name)
-
-        # Get env vars
-        env_vars = {**self._env_vars, **extra_args}
-
+    def run(self) -> Connection:
         # Start script
         run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
-        run_script_cmd = f"./sandbox/run.sh '{script_name}.py' {run_t}"
+        run_script_cmd = f"./sandbox/run.sh 'play.py' {run_t}"
         socket: SSLSocket
         _, socket = self._container.exec_run(cmd=run_script_cmd,
                                              user='sandbox',
@@ -247,7 +237,7 @@ class TimedContainer:
                                              socket=True,
                                              stdin=True,
                                              tty=False,
-                                             environment=env_vars,
+                                             environment=self._env_vars,
                                              workdir="/home/sandbox/")
 
         # Set up input to the container

@@ -4,7 +4,7 @@ import logging
 import cuwais.database
 import flask
 from cuwais.config import config_file
-from flask import request, Response
+from flask import request, Response, abort
 
 from runner import gamemodes
 from runner.matchmaker import Matchmaker
@@ -21,10 +21,13 @@ def run():
     gamemode_name = str(request.args.get("gamemode", "info"))
     gamemode = gamemodes.Gamemode.get(gamemode_name)
 
+    if gamemode is None:
+        abort(404)
+
     submissions_str = request.args.get("submissions", "").lower()
     submissions = [] if submissions_str is None or submissions_str == "" else submissions_str.split(",")
 
-    if len(submissions) != gamemode.players:
+    if len(submissions) != gamemode.player_count:
         return Response(str({"error": f"Expected {gamemode.players} submissions, got {len(submissions)}"}),
                         status=400, mimetype='application/json')
 
@@ -34,6 +37,15 @@ def run():
             del options[v]
 
     parsed = gamemode.run(submissions, options)
+
+    return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
+
+
+@app.route('/single_move/<submission_id>', methods=['GET'])
+def single_move(submission_id):
+    gamemode = gamemodes.Gamemode.get(config_file.get("gamemode.id"))
+
+    parsed = gamemode.run(submission_id, config_file.get("gamemode.options"), 1)
 
     return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
 

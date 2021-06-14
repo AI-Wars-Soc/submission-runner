@@ -2,7 +2,7 @@ import builtins
 import sys
 import traceback
 
-from sandbox import player_import
+from sandbox import player_import, info
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
 from shared.messages import MessageType, Connection
 
@@ -15,6 +15,10 @@ def call(method_name, method_args, method_kwargs):
 
 def ping():
     return "pong"
+
+
+def get_info():
+    return info.get_info()
 
 
 def get_instructions(messages):
@@ -44,7 +48,8 @@ def main():
             t = instruction["type"]
             del instruction["type"]
             dispatch = {"call": call,
-                        "ping": ping}[t]
+                        "ping": ping,
+                        "info": get_info}[t]
 
             # Execute
             data = dispatch(**instruction)

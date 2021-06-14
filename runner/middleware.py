@@ -11,8 +11,8 @@ class SubmissionNotActiveError(RuntimeError):
 
 
 class ContainerConnection:
-    def __init__(self, script_name: str, container: TimedContainer, env_vars):
-        self._connection = container.run(script_name, env_vars)
+    def __init__(self, container: TimedContainer):
+        self._connection = container.run()
         self._prints = []
         self._done = False
 
@@ -54,11 +54,11 @@ class ContainerConnectionFailedError(RuntimeError):
 
 
 class Middleware:
-    def __init__(self, script_name: str, containers: Iterable[TimedContainer], env_vars):
+    def __init__(self, containers: Iterable[TimedContainer]):
         self._connections = []
         for i, container in enumerate(containers):
             try:
-                self._connections.append(ContainerConnection(script_name, container, env_vars))
+                self._connections.append(ContainerConnection(container))
             except HandshakeFailedError as e:
                 raise ContainerConnectionFailedError(i, e.prints)
 

@@ -14,7 +14,7 @@ from cuwais.database import Submission, Result, Match
 from sqlalchemy import func, and_
 
 from runner import gamemodes
-from runner.parsers import ParsedResult, SingleResult
+from runner.results import ParsedResult, SingleResult
 
 logger = logging.getLogger(__name__)
 
@@ -294,15 +294,15 @@ def _run_typical_match(gamemode: gamemodes.Gamemode, options) -> bool:
 
     # Get n sumbissions
     submissions = []
-    if gamemode.players > 0:
+    if gamemode.player_count > 0:
         newest = _get_all_latest_healthy_submissions()
-        if len(newest) < gamemode.players:
+        if len(newest) < gamemode.player_count:
             return False
         newest_submissions = [submission for submission, _ in newest]
         healths = numpy.array([health for _, health in newest])
         logger.debug(f"Got newest submissions {newest_submissions}, with healths {healths}")
         healths *= (1 / numpy.sum(healths))
-        i_submissions = numpy.random.choice(len(newest_submissions), size=gamemode.players, replace=False, p=healths)
+        i_submissions = numpy.random.choice(len(newest_submissions), size=gamemode.player_count, replace=False, p=healths)
         for i in i_submissions:
             submissions.append(newest_submissions[i])
 
@@ -321,11 +321,11 @@ def _run_test_match(gamemode: gamemodes.Gamemode, options) -> bool:
 
     # Get n sumbissions
     submissions = []
-    if gamemode.players > 0:
+    if gamemode.player_count > 0:
         newest = _get_all_untested_submissions()
         if len(newest) == 0:
             return False
-        submissions = [random.choice(newest)] * gamemode.players
+        submissions = [random.choice(newest)] * gamemode.player_count
 
     # Run & parse
     result = _run_match(gamemode, options, submissions)
@@ -361,7 +361,7 @@ class Matchmaker(Thread):
             return False
 
     def run(self) -> None:
-        if self.gamemode.players < 1:
+        if self.gamemode.player_count < 1:
             return
 
         while True:
