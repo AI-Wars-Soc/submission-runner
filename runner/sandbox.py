@@ -60,28 +60,23 @@ class TimedContainer:
         self._copy_submission(submission_hash)
         self._lock_down()
 
-        # Create kill thread
-        logger.debug("Creating kill thread")
-        self._kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, timeout,))
-        self._kill_thread.setDaemon(True)
-        self._kill_thread.start()
+        # Kill thread
+        self._timeout = timeout
         self._timed_out = False
-        self._stopped = False
 
         logger.debug("Done making timed container")
 
+    def _start_timer(self):
+        logger.debug("Creating kill thread")
+        kill_thread = threading.Thread(target=TimedContainer._timeout_method, args=(self, self._timeout,))
+        kill_thread.setDaemon(True)
+        kill_thread.start()
+
     def stop(self):
-        self._stopped = True
         try:
-            if self._container is not None \
-                    and self._container.status in {"running", "created", "restarting", "paused"}:
-                self._container.stop(timeout=0)
-                # self._container.remove()
+            self._container.stop(timeout=0)
         except docker.errors.NotFound:
             pass
-        finally:
-            self._container = None
-            self._kill_thread.join()
 
     def __enter__(self):
         return self
@@ -164,10 +159,12 @@ class TimedContainer:
     def _timeout_method(self, timeout: int):
         try:
             self._container.wait(timeout=timeout)
-        except requests.exceptions.ReadTimeout or requests.exceptions.ConnectionError:
-            if not self._stopped:
-                self._timed_out = True
-                self.stop()
+        except requests.exceptions.ReadTimeout:
+            logger.debug("Killing thread due to timeout")
+            self._timed_out = True
+            self.stop()
+        except requests.exceptions.ConnectionError:
+            pass
 
     @staticmethod
     def _read(socket, n=4096):
@@ -250,6 +247,9 @@ class TimedContainer:
         return os.path.exists("./sandbox/" + script_name + ".py") and script_name_rex.match(script_name) is not None
 
     def run(self) -> Connection:
+        # Start the timer
+        self._start_timer()
+
         # Start script
         logger.debug("Running command in container")
         run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))

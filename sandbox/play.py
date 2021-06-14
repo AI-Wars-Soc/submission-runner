@@ -13,9 +13,13 @@ def failsafes():
     for path in info.get_all_writable():
         is_dir = os.path.isdir(path)
         if is_dir:
-            path = os.path.join(path, "/test.txt")
+            path = os.path.join(path, "test.txt")
+        if not is_dir:
+            if path.startswith("/dev") or path.startswith("/proc"):
+                continue
+        print(path)
         if info.write_until_full(path, remove=is_dir) == "No Limit":
-            raise FailsafeError("Writable directory/file: " + path)
+            raise FailsafeError(f"Writable {'directory' if is_dir else 'file'}: " + path)
 
 
 def call(method_name, method_args, method_kwargs):

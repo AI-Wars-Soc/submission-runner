@@ -10,7 +10,7 @@ from cuwais.config import config_file
 from runner.logger import logger
 from runner.middleware import Middleware, ContainerConnectionFailedError, SubmissionNotActiveError
 from runner.results import ParsedResult, SingleResult
-from runner.sandbox import TimedContainer
+from runner.sandbox import TimedContainer, ContainerTimedOutException
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
 
 _type_names = {
@@ -140,7 +140,7 @@ class Gamemode:
 
         try:
             latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
-        except SubmissionNotActiveError:
+        except (SubmissionNotActiveError, ContainerTimedOutException):
             # Shouldn't crash, it's our fault if it does :(
             return [Outcome.Draw] * self.player_count, Result.UnknownResultType, moves, initial_encoded_board
         latency = sum(latency) / len(latency)
@@ -163,6 +163,8 @@ class Gamemode:
                                        time_remaining=time_remaining[player_turn])
             except SubmissionNotActiveError:
                 return make_loss(player_turn), Result.ProcessKilled, moves, initial_encoded_board
+            except ContainerTimedOutException:
+                return make_loss(player_turn), Result.Timeout, moves, initial_encoded_board
             end_time = time.time_ns()
 
             t = (end_time - start_time) / 1e9

@@ -2,7 +2,7 @@ import time
 from typing import Any, Iterable
 
 from runner.logger import logger
-from runner.sandbox import TimedContainer
+from runner.sandbox import TimedContainer, ContainerTimedOutException
 from shared.exceptions import FailsafeError
 from shared.messages import MessageType, HandshakeFailedError
 
@@ -23,6 +23,11 @@ class ContainerConnection:
         return "\n".join(self._prints)
 
     def get_next_message_data(self):
+        """Tries to get a data message from the connection. Raises SubmissionNotActiveError if the container
+        is no longer active, or raises ContainerTimedOutException if the container times out while we are reading.
+        While these evens are similar, SubmissionNotActiveError is due to the process dying on the VM side
+        and ContainerTimedOutException is due to the process dying on the host side"""
+
         if self._done:
             raise SubmissionNotActiveError()
 
@@ -80,12 +85,15 @@ class Middleware:
                 try:
                     data = self._connections[player_id].get_next_message_data()
                     new_messages.append(data)
-                except SubmissionNotActiveError:
+                except (SubmissionNotActiveError, ContainerTimedOutException):
                     break
             messages.append(new_messages)
         return messages
 
     def call(self, player_id, method_name, *args, **kwargs) -> Any:
+        """Calls a function with name method_name and args and kwargs as given.
+        Raises SubmissionNotActiveError if the container is no longer active,
+        or raises ContainerTimedOutException if the container times out while we are waiting"""
         self._send(player_id, "call", method_name=method_name, method_args=args, method_kwargs=kwargs)
 
         return self._connections[player_id].get_next_message_data()
@@ -94,6 +102,9 @@ class Middleware:
         self._send(player_id, "data", **kwargs)
 
     def ping(self, player_id) -> float:
+        """Records the time taken for a message to be sent, parsed and responded to.
+        Raises SubmissionNotActiveError if the container is no longer active,
+        or raises ContainerTimedOutException if the container times out while we are waiting"""
         start_time = time.time_ns()
         self._send(player_id, "ping")
 
