@@ -15,6 +15,7 @@ from cuwais.config import config_file
 from docker.models.containers import Container
 
 from runner.logger import logger
+from runner.middleware import ConnectionTimedOutError
 from shared.messages import Connection
 
 DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
@@ -28,12 +29,6 @@ class InvalidEntryFile(RuntimeError):
 
 class InvalidSubmissionError(RuntimeError):
     pass
-
-
-class ContainerTimedOutException(RuntimeError):
-    def __init__(self, container):
-        self.container = container
-        super().__init__()
 
 
 class TimedContainer:
@@ -237,7 +232,7 @@ class TimedContainer:
         yield from iterator
 
         if self._timed_out:
-            raise ContainerTimedOutException(self)
+            raise ConnectionTimedOutError(self)
 
     def _add_stop(self, iterator):
         yield from iterator

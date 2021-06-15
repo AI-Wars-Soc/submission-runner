@@ -9,11 +9,11 @@ from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
 from runner.logger import logger
-from runner.middleware import Middleware, SubmissionNotActiveError, ContainerConnection
+from runner.middleware import Middleware, ConnectionNotActiveError, PlayerConnection, ConnectionTimedOutError
 from runner.results import ParsedResult, SingleResult
-from runner.sandbox import TimedContainer, ContainerTimedOutException
+from runner.sandbox import TimedContainer
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
-from shared.messages import HandshakeFailedError
+from shared.messages import HandshakeFailedError, Connection
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -92,10 +92,10 @@ class Gamemode:
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
 
-        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, ContainerConnection]]:
+        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, PlayerConnection]]:
             new_container = TimedContainer(timeout, submission_hash)
             try:
-                new_connection = ContainerConnection(new_container)
+                new_connection = PlayerConnection(new_container.run())
             except HandshakeFailedError as e:
                 each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
                             for _ in range(self.player_count)]
@@ -112,7 +112,7 @@ class Gamemode:
         try:
             logger.debug("Creating all required timed containers: ")
 
-            # Create a mapping of submission hashes to connections
+            # Create all required AIs
             executor = ThreadPoolExecutor(max_workers=len(submission_hashes))
             connections = []
             for container, connection in executor.map(connect, submission_hashes):
@@ -159,7 +159,7 @@ class Gamemode:
         try:
             # Calculate latencies
             latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
-        except (SubmissionNotActiveError, ContainerTimedOutException):
+        except (ConnectionNotActiveError, ConnectionTimedOutError):
             # Shouldn't crash, it's our fault if it does :(
             return [Outcome.Draw] * self.player_count, Result.UnknownResultType, moves, initial_encoded_board
         latency = sum(latency) / len(latency)
@@ -180,9 +180,9 @@ class Gamemode:
             try:
                 move = middleware.call(player_turn, "make_move", board=self._filter_board(board, player_turn),
                                        time_remaining=time_remaining[player_turn])
-            except SubmissionNotActiveError:
+            except ConnectionNotActiveError:
                 return make_loss(player_turn), Result.ProcessKilled, moves, initial_encoded_board
-            except ContainerTimedOutException:
+            except ConnectionTimedOutError:
                 return make_loss(player_turn), Result.Timeout, moves, initial_encoded_board
             end_time = time.time_ns()
 

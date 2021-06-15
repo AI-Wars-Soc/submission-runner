@@ -2,19 +2,24 @@ import time
 from typing import Any, Iterable
 
 from runner.logger import logger
-from runner.sandbox import TimedContainer, ContainerTimedOutException
 from shared.exceptions import FailsafeError
-from shared.messages import MessageType
+from shared.messages import MessageType, Connection
 
 
-class SubmissionNotActiveError(RuntimeError):
+class ConnectionNotActiveError(RuntimeError):
     def __init__(self):
-        super(SubmissionNotActiveError, self).__init__()
+        super(ConnectionNotActiveError, self).__init__()
 
 
-class ContainerConnection:
-    def __init__(self, container: TimedContainer):
-        self._connection = container.run()
+class ConnectionTimedOutError(RuntimeError):
+    def __init__(self, container):
+        self.container = container
+        super().__init__()
+
+
+class PlayerConnection:
+    def __init__(self, connection: Connection):
+        self._connection = connection
         self._prints = []
         self._done = False
 
@@ -23,13 +28,13 @@ class ContainerConnection:
         return "\n".join(self._prints)
 
     def get_next_message_data(self):
-        """Tries to get a data message from the connection. Raises SubmissionNotActiveError if the container
-        is no longer active, or raises ContainerTimedOutException if the container times out while we are reading.
-        While these evens are similar, SubmissionNotActiveError is due to the process dying on the VM side
-        and ContainerTimedOutException is due to the process dying on the host side"""
+        """Tries to get a data message from the connection. Raises ConnectionNotActiveError if the container
+        is no longer active, or raises ConnectionTimedOutError if the container times out while we are reading.
+        While these evens are similar, ConnectionNotActiveError is due to the process dying on the VM side
+        and ConnectionTimedOutError is due to the process dying on the host side"""
 
         if self._done:
-            raise SubmissionNotActiveError()
+            raise ConnectionNotActiveError()
 
         for message in self._connection.receive:
             if message.message_type == MessageType.PRINT:
@@ -37,11 +42,12 @@ class ContainerConnection:
             elif message.message_type == MessageType.RESULT:
                 if isinstance(message.data, FailsafeError):
                     logger.error(str(message.data))
-                    raise SubmissionNotActiveError()
+                    self._done = True
+                    raise ConnectionNotActiveError()
                 return message.data
             elif message.message_type == MessageType.END:
                 self._done = True
-                raise SubmissionNotActiveError()
+                raise ConnectionNotActiveError()
 
         self._done = True
         self.get_next_message_data()  # Force an except
@@ -53,22 +59,22 @@ class ContainerConnection:
             try:
                 data = self.get_next_message_data()
                 messages.append(data)
-            except (SubmissionNotActiveError, ContainerTimedOutException):
+            except (ConnectionNotActiveError, ConnectionTimedOutError):
                 break
         return messages
 
     def call(self, method_name, *args, **kwargs) -> Any:
         """Calls a function with name method_name and args and kwargs as given.
-        Raises SubmissionNotActiveError if the container is no longer active,
-        or raises ContainerTimedOutException if the container times out while we are waiting"""
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
         self._send("call", method_name=method_name, method_args=args, method_kwargs=kwargs)
 
         return self.get_next_message_data()
 
     def ping(self) -> float:
         """Records the time taken for a message to be sent, parsed and responded to.
-        Raises SubmissionNotActiveError if the container is no longer active,
-        or raises ContainerTimedOutException if the container times out while we are waiting"""
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
         start_time = time.time_ns()
         self._send("ping")
 
@@ -86,13 +92,13 @@ class ContainerConnection:
 
     def _send_message(self, data):
         if self._done:
-            raise SubmissionNotActiveError()
+            raise ConnectionNotActiveError()
 
         self._connection.send_result(data)
 
 
 class Middleware:
-    def __init__(self, connections: Iterable[ContainerConnection]):
+    def __init__(self, connections: Iterable[PlayerConnection]):
         self._connections = list(connections)
 
     @property
@@ -104,14 +110,14 @@ class Middleware:
 
     def call(self, player_id, method_name, *args, **kwargs) -> Any:
         """Calls a function with name method_name and args and kwargs as given.
-        Raises SubmissionNotActiveError if the container is no longer active,
-        or raises ContainerTimedOutException if the container times out while we are waiting"""
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
         return self._connections[player_id].call(method_name, *args, **kwargs)
 
     def ping(self, player_id) -> float:
         """Records the time taken for a message to be sent, parsed and responded to.
-        Raises SubmissionNotActiveError if the container is no longer active,
-        or raises ContainerTimedOutException if the container times out while we are waiting"""
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
         return self._connections[player_id].ping()
 
     def get_player_prints(self, i):
