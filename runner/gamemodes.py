@@ -225,6 +225,12 @@ class Gamemode:
     def get(gamemode_name):
         return {"chess": ChessGamemode()}.get(gamemode_name, None)
 
+    @staticmethod
+    def get_from_config():
+        gamemode = Gamemode.get(config_file.get("gamemode.id").lower())
+        options = config_file.get("gamemode.options")
+        return gamemode, options
+
 
 class ChessGamemode(Gamemode):
     def __init__(self):

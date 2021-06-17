@@ -2,15 +2,16 @@ import json
 
 import cuwais.database
 import flask
+import socketio
 from cuwais.config import config_file
 from flask import request, Response, abort, render_template
 from werkzeug.middleware.profiler import ProfilerMiddleware
 
 from runner import gamemodes
-from runner.matchmaker import Matchmaker, logger
-from runner.web_connection import WebConnection
+from runner.gamemodes import Gamemode
+from runner.matchmaker import Matchmaker
+from runner.web_connection import WebConnection, sio
 from shared.messages import Encoder
-from flask_socketio import SocketIO
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")
@@ -19,12 +20,13 @@ if app.config["DEBUG"]:
     app.config['PROFILE'] = config_file.get("profile")
     app.wsgi_app = ProfilerMiddleware(app.wsgi_app, restrictions=[30])
 
+# create a Socket.IO server
+app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
+
 with open("/run/secrets/secret_key") as secrets_file:
     secret = "".join(secrets_file.readlines())
     app.secret_key = secret
     app.config["SECRET_KEY"] = secret
-
-socketio = SocketIO(app, logger=logger, engineio_logger=logger)
 
 
 @app.route('/run', methods=['GET'])
@@ -54,7 +56,7 @@ def run():
     return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
 
 
-socketio.on_namespace(WebConnection('/play_game'))
+sio.register_namespace(WebConnection('/play_game'))
 
 
 @app.route('/wstest')
@@ -64,8 +66,7 @@ def wstest():
 
 def main():
     # Get some options
-    gamemode = gamemodes.Gamemode.get(config_file.get("gamemode.id").lower())
-    options = config_file.get("gamemode.options")
+    gamemode, options = Gamemode.get_from_config()
     matchmakers = int(config_file.get("submission_runner.matchmakers"))
     seconds_per_run = int(config_file.get("submission_runner.target_seconds_per_game"))
 
@@ -78,7 +79,12 @@ def main():
         matchmaker.start()
 
     # Serve webpages
-    socketio.run(app, host="0.0.0.0", port=8080)
+    if app.config["DEBUG"]:
+        app.run(host="0.0.0.0", port=8080)
+    else:
+        from waitress import serve
+
+        serve(app, host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":
