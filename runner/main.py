@@ -3,11 +3,12 @@ import json
 import cuwais.database
 import flask
 from cuwais.config import config_file
-from flask import request, Response, abort
+from flask import request, Response, abort, render_template
 from werkzeug.middleware.profiler import ProfilerMiddleware
 
 from runner import gamemodes
-from runner.matchmaker import Matchmaker
+from runner.matchmaker import Matchmaker, logger
+from runner.web_connection import WebConnection
 from shared.messages import Encoder
 from flask_socketio import SocketIO
 
@@ -23,7 +24,7 @@ with open("/run/secrets/secret_key") as secrets_file:
     app.secret_key = secret
     app.config["SECRET_KEY"] = secret
 
-socketio = SocketIO(app)
+socketio = SocketIO(app, logger=logger, engineio_logger=logger)
 
 
 @app.route('/run', methods=['GET'])
@@ -51,6 +52,14 @@ def run():
     parsed = gamemode.run(submissions, options, moves)
 
     return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
+
+
+socketio.on_namespace(WebConnection('/play_game'))
+
+
+@app.route('/wstest')
+def wstest():
+    return render_template('wstest.html')
 
 
 def main():
