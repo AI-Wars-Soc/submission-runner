@@ -138,6 +138,10 @@ class Connection:
             if message.message_type == MessageType.NEW_KEY:
                 key = message.data
 
+            if message.message_type == MessageType.END:
+                yield message
+                return
+
             yield message
 
     @staticmethod
