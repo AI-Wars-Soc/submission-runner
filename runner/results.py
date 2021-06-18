@@ -3,7 +3,7 @@ from typing import List
 
 from cuwais.common import Outcome, Result
 
-from shared.messages import Encoder
+from shared.message_connection import Encoder
 
 
 class SingleResult(dict):

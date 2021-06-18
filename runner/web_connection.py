@@ -7,136 +7,90 @@ import queue
 
 from runner.gamemodes import Gamemode
 from runner.logger import logger
-from runner.middleware import PlayerConnection
-from shared.messages import Connection, MessageType, Encoder
+from shared.message_connection import Encoder
+from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 sio = socketio.Server()
 
 
-class SRMWQueue:
-    __eof_flag = object()
-
-    def __init__(self):
-        self._buffer = queue.Queue()
-        self._count = threading.Semaphore(value=0)
+class SocketConnection(Connection):
+    def __init__(self, send_fn):
+        self._send_fn = send_fn
+        self._semaphore = threading.Semaphore(value=0)
+        self._responses = queue.Queue()
         self._closed = False
 
-    def enqueue(self, v):
-        if self._closed:
-            return
+    def register_response(self, response):
+        self._responses.put(response)
+        self._semaphore.release()
 
-        self._buffer.put(v)
-        self._count.release()
+    def get_next_message_data(self):
+        acquired = self._semaphore.acquire(timeout=5*60)
+
+        if not acquired:
+            self.close()
+            raise ConnectionTimedOutError()
+
+        if self._closed:
+            self._semaphore.release()
+            raise ConnectionNotActiveError()
+
+        self._responses.get()
 
     def close(self):
-        self.enqueue(self.__eof_flag)
-        self._count.release(n=2 << 32)  # Unblock anything blocked
+        self._closed = True
+        self._semaphore.release()
 
-    def dequeue(self):
-        if self._closed:
-            return self.__eof_flag
+    def send_call(self, method_name, method_args, method_kwargs):
+        self._send_fn({"type": "call", "name": method_name, "args": method_args, "kwargs": method_kwargs})
 
-        self._count.acquire()
+    def send_ping(self):
+        self._send_fn({"type": "ping"})
 
-        # Check again because we just blocked
-        if self._closed:
-            return self.__eof_flag
-
-        v = self._buffer.get()
-
-        if v is self.__eof_flag:
-            self._closed = True
-
-        return v
-
-    def __next__(self):
-        v = self.dequeue()
-
-        if v is self.__eof_flag:
-            raise StopIteration()
-
-        return v
-
-    def __iter__(self):
-        while True:
-            v = self.dequeue()
-
-            if v is self.__eof_flag:
-                return
-
-            yield v
-
-
-class SendThread(threading.Thread):
-    def __init__(self, messages, send_fn):
-        super().__init__()
-        self.daemon = True
-        self.messages = messages
-        self.send_fn = send_fn
-
-    def run(self):
-        for message in self.messages:
-            self.send_fn(message)
+    def get_prints(self) -> str:
+        return ""
 
 
 class GamemodeThread(threading.Thread):
-    def __init__(self, in_queue: SRMWQueue, out_queue: SRMWQueue, submissions):
+    def __init__(self, connection, submissions):
         super().__init__()
         self.daemon = True
-        self.in_queue = in_queue
-        self.out_queue = out_queue
+        self.connection = connection
         self.submissions = submissions
 
     def run(self):
-        connection = PlayerConnection(Connection(lambda m: self.out_queue.enqueue(m), iter(self.in_queue)))
         gamemode, options = Gamemode.get_from_config()
-        gamemode.run(self.submissions, options, connections=[connection])
+        result = gamemode.run(self.submissions, options, connections=[self.connection])
+
+        logger.debug(f"Completed game, got result {dict(result)}")
 
 
 class WebConnection(Namespace):
     def on_connect(self, sid, environ):
         logger.debug("======= Connected")
 
-        listening_queue = SRMWQueue()
-        sending_queue = SRMWQueue()
-
-        with self.session(sid) as session:
-            session["web_connection_listening_queue"] = listening_queue
-            session["web_connection_sending_queue"] = sending_queue
-            session["web_connection_connection"] = None
-
-    def on_disconnect(self, sid):
-        logger.debug("======= Disconnected")
-        with self.session(sid) as session:
-            session["web_connection_listening_queue"].close()
-            session["web_connection_sending_queue"].close()
-
-            connection = session["web_connection_connection"]
-            if connection is not None:
-                connection.send(MessageType.END)
-
-    def on_start_game(self, sid, data):
-        logger.debug("======= Start Game")
-
         def send_fn(m):
             self.send(json.dumps(m, cls=Encoder), room=sid)
 
         with self.session(sid) as session:
+            session["connection"] = SocketConnection(send_fn)
+
+    def on_disconnect(self, sid):
+        logger.debug("======= Disconnected")
+        with self.session(sid) as session:
+            session["connection"].close()
+
+    def on_start_game(self, sid, data):
+        logger.debug("======= Start Game")
+
+        with self.session(sid) as session:
             data_obj = json.loads(data)
 
-            listening_queue = session["web_connection_listening_queue"]
-            sending_queue = session["web_connection_sending_queue"]
+            GamemodeThread(session["connection"], data_obj["submissions"]).start()
 
-            GamemodeThread(listening_queue, sending_queue, data_obj["submissions"]).start()
-
-            connection = Connection(lambda m: listening_queue.enqueue(m), iter(sending_queue))
-            session["web_connection_connection"] = connection
-
-            SendThread(connection.receive, send_fn).start()
-
-    def on_new_key(self, sid, data):
-        logger.debug("======= Play Move")
+    def on_respond(self, sid, data):
+        logger.debug("======= Respond")
         with self.session(sid) as session:
-            connection: Connection
-            connection = session["web_connection_connection"]
-            connection.send_result(data)
+            connection: SocketConnection
+            connection = session["connection"]
+            connection.register_response(data)

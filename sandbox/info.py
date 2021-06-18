@@ -5,7 +5,7 @@ import subprocess
 import urllib.request
 import numpy as np
 from time import time
-from shared.messages import Connection
+from shared.connection import Connection
 
 
 def connect(dom):

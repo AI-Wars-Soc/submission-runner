@@ -1,6 +1,6 @@
 from typing import Any, Iterable
 
-from shared.messages import Connection
+from shared.connection import Connection
 
 
 class Middleware:

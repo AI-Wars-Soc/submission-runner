@@ -13,7 +13,8 @@ from runner.middleware import Middleware
 from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
-from shared.messages import HandshakeFailedError, Connection, ConnectionNotActiveError, ConnectionTimedOutError
+from shared.message_connection import HandshakeFailedError
+from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),

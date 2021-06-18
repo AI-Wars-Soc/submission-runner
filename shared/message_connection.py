@@ -1,7 +1,6 @@
-import abc
 import builtins
 import itertools
-import time
+import logging
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -10,19 +9,8 @@ from typing import Iterator, Callable, Optional, Any
 
 import chess
 
-from runner.logger import logger
+from shared.connection import Connection, ConnectionNotActiveError
 from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
-
-
-class ConnectionNotActiveError(RuntimeError):
-    def __init__(self):
-        super(ConnectionNotActiveError, self).__init__()
-
-
-class ConnectionTimedOutError(RuntimeError):
-    def __init__(self, container):
-        self.container = container
-        super().__init__()
 
 
 @unique
@@ -101,42 +89,14 @@ class HandshakeFailedError(RuntimeError):
         super().__init__()
 
 
-class Connection:
-    @abc.abstractmethod
-    def get_prints(self) -> str:
-        pass
-
-    @abc.abstractmethod
-    def get_next_message_data(self):
-        """Tries to get a data message from the connection. Raises ConnectionNotActiveError if the container
-        is no longer active, or raises ConnectionTimedOutError if the container times out while we are reading.
-        While these evens are similar, ConnectionNotActiveError is due to the process dying on the VM side
-        and ConnectionTimedOutError is due to the process dying on the host side"""
-        pass
-
-    @abc.abstractmethod
-    def complete(self):
-        pass
-
-    @abc.abstractmethod
-    def call(self, method_name, *args, **kwargs) -> Any:
-        """Calls a function with name method_name and args and kwargs as given.
-        Raises ConnectionNotActiveError if the container is no longer active,
-        or raises ConnectionTimedOutError if the container times out while we are waiting"""
-        pass
-
-    @abc.abstractmethod
-    def ping(self) -> float:
-        """Records the time taken for a message to be sent, parsed and responded to.
-        Raises ConnectionNotActiveError if the container is no longer active,
-        or raises ConnectionTimedOutError if the container times out while we are waiting"""
-        pass
-
-
 class MessagePrintConnection(Connection):
     _in_stream: Iterator[Message]
 
     def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
+        # Set up state
+        self._done = False
+        self._prints = []
+
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
         self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
@@ -148,11 +108,11 @@ class MessagePrintConnection(Connection):
         self._in_key = None
         self._handshake_in()
 
-        self._done = False
-        self._prints = []
-
     def get_prints(self) -> str:
         return "\n".join(self._prints)
+
+    def close(self):
+        self.send_message(Message(self._out_key, MessageType.END, {}))
 
     def get_next_message_data(self):
         if self._done:
@@ -163,7 +123,7 @@ class MessagePrintConnection(Connection):
                 self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
                 if isinstance(message.data, FailsafeError):
-                    logger.error(str(message.data))
+                    logging.error(str(message.data))
                     self._done = True
                     raise ConnectionNotActiveError()
                 return message.data
@@ -174,34 +134,11 @@ class MessagePrintConnection(Connection):
         self._done = True
         self.get_next_message_data()  # Force an except
 
-    def complete(self):
-        self.send_message(Message(self._out_key, MessageType.END, {}))
-        messages = []
-        while True:
-            try:
-                data = self.get_next_message_data()
-                messages.append(data)
-            except (ConnectionNotActiveError, ConnectionTimedOutError):
-                break
-        return messages
+    def send_call(self, method_name, method_args, method_kwargs):
+        self._send("call", method_name=method_name, method_args=method_args, method_kwargs=method_kwargs)
 
-    def call(self, method_name, *args, **kwargs) -> Any:
-        self._send("call", method_name=method_name, method_args=args, method_kwargs=kwargs)
-
-        return self.get_next_message_data()
-
-    def ping(self) -> float:
-        start_time = time.time_ns()
+    def send_ping(self):
         self._send("ping")
-
-        self.get_next_message_data()
-        end_time = time.time_ns()
-
-        delta = (end_time - start_time) / 1e9
-
-        logger.debug(f"Ping delta: {delta}")
-
-        return delta
 
     def _handshake_out(self):
         message = Message(None, MessageType.NEW_KEY, self._out_key)

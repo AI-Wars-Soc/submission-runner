@@ -1,4 +1,4 @@
-from shared.messages import Sender
+from shared.message_connection import Sender
 import numpy as np
 
 sender = Sender()

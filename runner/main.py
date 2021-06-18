@@ -11,7 +11,7 @@ from runner import gamemodes
 from runner.gamemodes import Gamemode
 from runner.matchmaker import Matchmaker
 from runner.web_connection import WebConnection, sio
-from shared.messages import Encoder
+from shared.message_connection import Encoder
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")

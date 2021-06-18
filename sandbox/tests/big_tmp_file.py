@@ -1,5 +1,5 @@
 import os
-from shared.messages import Sender
+from shared.message_connection import Sender
 
 sender = Sender()
 with open("/tmp/big_data.txt", 'wb') as f:

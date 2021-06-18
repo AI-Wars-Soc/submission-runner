@@ -15,7 +15,8 @@ from cuwais.config import config_file
 from docker.models.containers import Container
 
 from runner.logger import logger
-from shared.messages import Connection, ConnectionTimedOutError, MessagePrintConnection
+from shared.message_connection import MessagePrintConnection
+from shared.connection import Connection, ConnectionTimedOutError
 
 DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
 _client = docker.from_env()
@@ -231,7 +232,7 @@ class TimedContainer:
         yield from iterator
 
         if self._timed_out:
-            raise ConnectionTimedOutError(self)
+            raise ConnectionTimedOutError()
 
     def _add_stop(self, iterator):
         yield from iterator

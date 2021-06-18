@@ -5,7 +5,8 @@ import traceback
 
 from sandbox import player_import, info
 from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
-from shared.messages import MessageType, Connection
+from shared.message_connection import MessagePrintConnection
+from shared.connection import ConnectionTimedOutError, ConnectionNotActiveError
 
 
 def failsafes():
@@ -35,20 +36,17 @@ def get_info():
     return info.get_info()
 
 
-def get_instructions(messages):
-    for message in messages:
-        if message.is_end():
-            break
-        elif message.message_type != MessageType.RESULT:
-            continue
-        else:
-            yield message.data
+def get_instructions(connection):
+    while True:
+        try:
+            yield connection.get_next_message_data()
+        except (ConnectionTimedOutError, ConnectionNotActiveError):
+            return
 
 
 def main():
-    connection = Connection()
-    in_stream = connection.receive
-    instructions = get_instructions(in_stream)
+    connection = MessagePrintConnection()
+    instructions = get_instructions(connection)
 
     # Check that we haven't got any security holes
     if os.getenv("DEBUG").lower().startswith("t"):

@@ -1,6 +1,6 @@
 import os
 import itertools
-from shared.messages import Sender
+from shared.message_connection import Sender
 
 sender = Sender()
 
