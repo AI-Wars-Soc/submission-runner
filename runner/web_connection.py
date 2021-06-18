@@ -29,7 +29,7 @@ class SocketConnection(Connection):
         if self._closed:
             raise ConnectionNotActiveError()
 
-        acquired = self._semaphore.acquire(timeout=5*60)
+        acquired = self._semaphore.acquire(timeout=config_file.get("gamemode.options.player_turn_time"))
 
         if not acquired:
             self.close()
@@ -39,7 +39,7 @@ class SocketConnection(Connection):
             self._semaphore.release()
             raise ConnectionNotActiveError()
 
-        self._responses.get()
+        return self._responses.get()
 
     def close(self):
         self._closed = True

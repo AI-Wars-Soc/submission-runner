@@ -209,7 +209,10 @@ class Gamemode:
 
             move = self._parse_move(move)
 
+            logger.debug(f"Got move {move}")
+
             if not self._is_move_legal(board, move):
+                logger.debug(f"Move is not legal {move}")
                 return make_loss(player_turn), Result.IllegalMove, moves, initial_encoded_board
 
             moves.append(self._encode_move(move, player_turn))
