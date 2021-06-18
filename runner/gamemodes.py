@@ -88,6 +88,7 @@ class Gamemode:
         submission_hashes = list(submission_hashes)
         if options is None:
             options = dict()
+        options = {**self._options, **options}
         if connections is None:
             connections = []
         connections: List[Connection]
@@ -98,7 +99,7 @@ class Gamemode:
             raise RuntimeError("Invalid number of players total")
 
         # Create containers
-        timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
+        timeout = (self.player_count + 1) * int(options.get("turn_time", 10))
 
         def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, Connection]]:
             new_container = TimedContainer(timeout, submission_hash)
@@ -134,7 +135,7 @@ class Gamemode:
 
             # Run
             logger.debug("Running...")
-            outcomes, result, moves, initial_board = self._run_loop(middleware, {**self._options, **options}, turns)
+            outcomes, result, moves, initial_board = self._run_loop(middleware, options, turns)
 
             # Gather
             logger.debug("Completed game, shutting down containers...")

@@ -22,6 +22,7 @@ class Connection:
         pass
 
     def complete(self):
+        self.close()
         messages = []
         while True:
             try:

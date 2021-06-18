@@ -2,6 +2,7 @@ import json
 import threading
 
 import socketio
+from cuwais.config import config_file
 from socketio import Namespace
 import queue
 
@@ -25,6 +26,9 @@ class SocketConnection(Connection):
         self._semaphore.release()
 
     def get_next_message_data(self):
+        if self._closed:
+            raise ConnectionNotActiveError()
+
         acquired = self._semaphore.acquire(timeout=5*60)
 
         if not acquired:
@@ -52,44 +56,49 @@ class SocketConnection(Connection):
 
 
 class GamemodeThread(threading.Thread):
-    def __init__(self, connection, submissions):
+    def __init__(self, connection, submissions, send_fn):
         super().__init__()
         self.daemon = True
         self.connection = connection
         self.submissions = submissions
+        self.send_fn = send_fn
 
     def run(self):
         gamemode, options = Gamemode.get_from_config()
+        options["turn_time"] = config_file.get("gamemode.options.player_turn_time")
         result = gamemode.run(self.submissions, options, connections=[self.connection])
 
-        logger.debug(f"Completed game, got result {dict(result)}")
+        self.send_fn({"type": "result", "result": dict(result)})
+
+
+def _make_send_fn(connection, sid):
+    def send_fn(m):
+        connection.send(json.dumps(m, cls=Encoder), room=sid)
+    return send_fn
 
 
 class WebConnection(Namespace):
     def on_connect(self, sid, environ):
-        logger.debug("======= Connected")
-
-        def send_fn(m):
-            self.send(json.dumps(m, cls=Encoder), room=sid)
+        logger.debug(f"Connected {sid}")
 
         with self.session(sid) as session:
-            session["connection"] = SocketConnection(send_fn)
+            session["connection"] = SocketConnection(_make_send_fn(self, sid))
 
     def on_disconnect(self, sid):
-        logger.debug("======= Disconnected")
+        logger.debug(f"Disconnected {sid}")
         with self.session(sid) as session:
             session["connection"].close()
 
     def on_start_game(self, sid, data):
-        logger.debug("======= Start Game")
+        logger.debug(f"Start Game {sid}: {data}")
 
         with self.session(sid) as session:
             data_obj = json.loads(data)
 
-            GamemodeThread(session["connection"], data_obj["submissions"]).start()
+            GamemodeThread(session["connection"], data_obj["submissions"], _make_send_fn(self, sid)).start()
 
     def on_respond(self, sid, data):
-        logger.debug("======= Respond")
+        logger.debug(f"Respond {sid}: {data}")
         with self.session(sid) as session:
             connection: SocketConnection
             connection = session["connection"]
