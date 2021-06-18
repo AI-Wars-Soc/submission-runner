@@ -9,6 +9,7 @@ RUN addgroup -S docker \
 
 # Install python
 RUN apk add --update --no-cache python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers \
+&& apk add make \
 && ln -sf python3 /usr/bin/python \
 && python3 -m ensurepip \
 && pip3 install --upgrade pip setuptools wheel numpy

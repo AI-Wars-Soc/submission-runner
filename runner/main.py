@@ -13,6 +13,9 @@ from runner.matchmaker import Matchmaker
 from runner.web_connection import WebConnection, sio
 from shared.message_connection import Encoder
 
+from gevent import monkey
+monkey.patch_all()
+
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")
 
@@ -79,12 +82,7 @@ def main():
         matchmaker.start()
 
     # Serve webpages
-    if app.config["DEBUG"]:
-        app.run(host="0.0.0.0", port=8080)
-    else:
-        from waitress import serve
-
-        serve(app, host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":
