@@ -7,7 +7,8 @@ import queue
 
 from runner.gamemodes import Gamemode
 from runner.logger import logger
-from shared.messages import Connection, MessageType
+from runner.middleware import PlayerConnection
+from shared.messages import Connection, MessageType, Encoder
 
 sio = socketio.Server()
 
@@ -24,20 +25,16 @@ class SRMWQueue:
         if self._closed:
             return
 
-        logger.debug(f"Enqueued {v}")
-
         self._buffer.put(v)
         self._count.release()
 
     def close(self):
         self.enqueue(self.__eof_flag)
-        self._count.release(2 << 32)  # Unblock anything blocked
+        self._count.release(n=2 << 32)  # Unblock anything blocked
 
     def dequeue(self):
         if self._closed:
             return self.__eof_flag
-
-        logger.debug(f"Dequeuing {self._count} {self._buffer}")
 
         self._count.acquire()
 
@@ -49,8 +46,6 @@ class SRMWQueue:
 
         if v is self.__eof_flag:
             self._closed = True
-
-        logger.debug(f"Dequeued {v}")
 
         return v
 
@@ -93,7 +88,7 @@ class GamemodeThread(threading.Thread):
         self.submissions = submissions
 
     def run(self):
-        connection = Connection(lambda m: self.out_queue.enqueue(m), iter(self.in_queue))
+        connection = PlayerConnection(Connection(lambda m: self.out_queue.enqueue(m), iter(self.in_queue)))
         gamemode, options = Gamemode.get_from_config()
         gamemode.run(self.submissions, options, connections=[connection])
 
@@ -124,7 +119,7 @@ class WebConnection(Namespace):
         logger.debug("======= Start Game")
 
         def send_fn(m):
-            self.send(m, room=sid)
+            self.send(json.dumps(m, cls=Encoder), room=sid)
 
         with self.session(sid) as session:
             data_obj = json.loads(data)
@@ -137,7 +132,7 @@ class WebConnection(Namespace):
             connection = Connection(lambda m: listening_queue.enqueue(m), iter(sending_queue))
             session["web_connection_connection"] = connection
 
-            SendThread(connection.receive, send_fn)
+            SendThread(connection.receive, send_fn).start()
 
     def on_new_key(self, sid, data):
         logger.debug("======= Play Move")

@@ -81,13 +81,18 @@ class Gamemode:
         """Converts a board to a string form for storing or transmitting"""
         pass
 
-    def run(self, submission_hashes=None, options=None, turns=2 << 32) -> ParsedResult:
+    def run(self, submission_hashes=None, options=None, turns=2 << 32, connections=None) -> ParsedResult:
         if submission_hashes is None:
             submission_hashes = []
         submission_hashes = list(submission_hashes)
         if options is None:
             options = dict()
+        if connections is None:
+            connections = []
         logger.debug(f"Request for gamemode {self._name}")
+
+        if len(connections) + len(submission_hashes) != self.player_count:
+            raise RuntimeError("Invalid number of players total")
 
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
@@ -103,7 +108,7 @@ class Gamemode:
                     if h == submission_hash:
                         each_res[i_hash].printed = "\n".join(e.prints)
 
-                logger.error("Failed to handshake with container!")
+                logger.error(f"Failed to handshake with container! {e.prints}")
                 return None, ParsedResult("", [], each_res)
             new_connection.ping()
             return new_container, new_connection
@@ -114,7 +119,6 @@ class Gamemode:
 
             # Create all required AIs
             executor = ThreadPoolExecutor(max_workers=len(submission_hashes))
-            connections = []
             for container, connection in executor.map(connect, submission_hashes):
                 if container is None:
                     return connection

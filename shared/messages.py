@@ -112,16 +112,14 @@ class Connection:
 
     def _handshake_in(self):
         prints = []
-        while True:
-            try:
-                message = next(self._in_stream)
-            except StopIteration:
-                raise HandshakeFailedError([p.data for p in prints])
+        for message in self._in_stream:
             if message.message_type == MessageType.NEW_KEY:
                 self._in_stream = itertools.chain(prints, self._in_stream)
                 return
             if message.message_type == MessageType.PRINT:
                 prints.append(message)
+
+        raise HandshakeFailedError([p.data for p in prints])
 
     @staticmethod
     def _make_messages_iterator(lines: Iterator[str]) -> Iterator[Message]:
