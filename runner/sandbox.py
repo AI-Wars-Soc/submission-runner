@@ -15,8 +15,7 @@ from cuwais.config import config_file
 from docker.models.containers import Container
 
 from runner.logger import logger
-from runner.middleware import ConnectionTimedOutError
-from shared.messages import Connection
+from shared.messages import Connection, ConnectionTimedOutError, MessagePrintConnection
 
 DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
 _client = docker.from_env()
@@ -274,7 +273,7 @@ class TimedContainer:
         received = self._add_stop(self._add_timeout_exception(lines))
 
         logger.debug(f"Connecting {self}")
-        return Connection(send_handler, received)
+        return MessagePrintConnection(send_handler, received)
 
     @staticmethod
     def _is_submission_valid(submission_hash: str, submission_path: str):

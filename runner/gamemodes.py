@@ -9,11 +9,11 @@ from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
 from runner.logger import logger
-from runner.middleware import Middleware, ConnectionNotActiveError, PlayerConnection, ConnectionTimedOutError
+from runner.middleware import Middleware
 from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
-from shared.messages import HandshakeFailedError, Connection
+from shared.messages import HandshakeFailedError, Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -89,6 +89,8 @@ class Gamemode:
             options = dict()
         if connections is None:
             connections = []
+        connections: List[Connection]
+
         logger.debug(f"Request for gamemode {self._name}")
 
         if len(connections) + len(submission_hashes) != self.player_count:
@@ -97,10 +99,10 @@ class Gamemode:
         # Create containers
         timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
 
-        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, PlayerConnection]]:
+        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, Connection]]:
             new_container = TimedContainer(timeout, submission_hash)
             try:
-                new_connection = PlayerConnection(new_container.run())
+                new_connection = new_container.run()
             except HandshakeFailedError as e:
                 each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
                             for _ in range(self.player_count)]

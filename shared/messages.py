@@ -1,5 +1,7 @@
+import abc
 import builtins
 import itertools
+import time
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -8,7 +10,19 @@ from typing import Iterator, Callable, Optional, Any
 
 import chess
 
+from runner.logger import logger
 from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
+
+
+class ConnectionNotActiveError(RuntimeError):
+    def __init__(self):
+        super(ConnectionNotActiveError, self).__init__()
+
+
+class ConnectionTimedOutError(RuntimeError):
+    def __init__(self, container):
+        self.container = container
+        super().__init__()
 
 
 @unique
@@ -88,6 +102,38 @@ class HandshakeFailedError(RuntimeError):
 
 
 class Connection:
+    @abc.abstractmethod
+    def get_prints(self) -> str:
+        pass
+
+    @abc.abstractmethod
+    def get_next_message_data(self):
+        """Tries to get a data message from the connection. Raises ConnectionNotActiveError if the container
+        is no longer active, or raises ConnectionTimedOutError if the container times out while we are reading.
+        While these evens are similar, ConnectionNotActiveError is due to the process dying on the VM side
+        and ConnectionTimedOutError is due to the process dying on the host side"""
+        pass
+
+    @abc.abstractmethod
+    def complete(self):
+        pass
+
+    @abc.abstractmethod
+    def call(self, method_name, *args, **kwargs) -> Any:
+        """Calls a function with name method_name and args and kwargs as given.
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
+        pass
+
+    @abc.abstractmethod
+    def ping(self) -> float:
+        """Records the time taken for a message to be sent, parsed and responded to.
+        Raises ConnectionNotActiveError if the container is no longer active,
+        or raises ConnectionTimedOutError if the container times out while we are waiting"""
+        pass
+
+
+class MessagePrintConnection(Connection):
     _in_stream: Iterator[Message]
 
     def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
@@ -98,13 +144,64 @@ class Connection:
 
         # Connect input
         in_stream_text = in_stream if in_stream is not None else _input_receiver()
-        self._in_stream = Connection._make_messages_iterator(in_stream_text)
+        self._in_stream = MessagePrintConnection._make_messages_iterator(in_stream_text)
         self._in_key = None
         self._handshake_in()
 
-    @property
-    def receive(self):
-        return self._in_stream
+        self._done = False
+        self._prints = []
+
+    def get_prints(self) -> str:
+        return "\n".join(self._prints)
+
+    def get_next_message_data(self):
+        if self._done:
+            raise ConnectionNotActiveError()
+
+        for message in self._in_stream:
+            if message.message_type == MessageType.PRINT:
+                self._prints.append(message.data)
+            elif message.message_type == MessageType.RESULT:
+                if isinstance(message.data, FailsafeError):
+                    logger.error(str(message.data))
+                    self._done = True
+                    raise ConnectionNotActiveError()
+                return message.data
+            elif message.message_type == MessageType.END:
+                self._done = True
+                raise ConnectionNotActiveError()
+
+        self._done = True
+        self.get_next_message_data()  # Force an except
+
+    def complete(self):
+        self.send_message(Message(self._out_key, MessageType.END, {}))
+        messages = []
+        while True:
+            try:
+                data = self.get_next_message_data()
+                messages.append(data)
+            except (ConnectionNotActiveError, ConnectionTimedOutError):
+                break
+        return messages
+
+    def call(self, method_name, *args, **kwargs) -> Any:
+        self._send("call", method_name=method_name, method_args=args, method_kwargs=kwargs)
+
+        return self.get_next_message_data()
+
+    def ping(self) -> float:
+        start_time = time.time_ns()
+        self._send("ping")
+
+        self.get_next_message_data()
+        end_time = time.time_ns()
+
+        delta = (end_time - start_time) / 1e9
+
+        logger.debug(f"Ping delta: {delta}")
+
+        return delta
 
     def _handshake_out(self):
         message = Message(None, MessageType.NEW_KEY, self._out_key)
@@ -130,7 +227,7 @@ class Connection:
             if line.isspace() or line == "":
                 continue
 
-            message = Connection._process_line(key, line)
+            message = MessagePrintConnection._process_line(key, line)
 
             # Update key if message told us to
             if message.message_type == MessageType.NEW_KEY:
@@ -158,7 +255,7 @@ class Connection:
     def _process_line(key: int, line: str) -> "Message":
         # Check for commands
         try:
-            message = Connection._message_from_string(line)
+            message = MessagePrintConnection._message_from_string(line)
         except MessageParseError:
             # No match => assume print statement
             return Message(key, MessageType.PRINT, line)
@@ -175,16 +272,19 @@ class Connection:
 
         return message
 
-    def send(self, message_type: MessageType, data=None):
-        message = Message(self._out_key, message_type, data)
-        self.send_message(message)
-
-    def send_message(self, message: Message):
-        s = json.dumps(message, cls=Encoder)
-        self._out_handler(s)
+    def _send(self, instruction, **kwargs):
+        self.send_result({"type": instruction, **kwargs})
 
     def send_result(self, data):
-        self.send(MessageType.RESULT, data)
+        message = Message(self._out_key, MessageType.RESULT, data)
+        self.send_message(message)
+
+    def send_message(self, message):
+        if self._done:
+            raise ConnectionNotActiveError()
+
+        s = json.dumps(message, cls=Encoder)
+        self._out_handler(s)
 
 
 class Encoder(json.JSONEncoder):

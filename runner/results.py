@@ -24,7 +24,7 @@ class ParsedResult(dict):
         self._recording = {"initial_board": initial_board, "moves": moves}
         self._submission_results = submission_results
 
-        super().__init__(recording=self._recording, submission_results=submission_results)
+        super().__init__(recording=self._recording, submission_results=[dict(r) for r in submission_results])
 
     @property
     def outcomes(self):
