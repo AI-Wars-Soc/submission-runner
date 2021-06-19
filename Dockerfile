@@ -8,11 +8,11 @@ RUN addgroup -S docker \
 && addgroup subrunner docker
 
 # Install python
-RUN apk add --update --no-cache python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers \
-&& apk add make \
+RUN apk --update upgrade \
+&& apk add --update python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers make \
 && ln -sf python3 /usr/bin/python \
 && python3 -m ensurepip \
-&& pip3 install --upgrade pip setuptools wheel numpy
+&& pip3 install --upgrade pip setuptools wheel numpy gevent
 
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt

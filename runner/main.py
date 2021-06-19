@@ -13,8 +13,6 @@ from runner.matchmaker import Matchmaker
 from runner.web_connection import WebConnection, sio
 from shared.message_connection import Encoder
 
-from gevent import monkey
-monkey.patch_all()
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = config_file.get("debug")
@@ -33,7 +31,7 @@ with open("/run/secrets/secret_key") as secrets_file:
 
 
 @app.route('/run', methods=['GET'])
-def run():
+def run_endpoint():
     gamemode_name = str(request.args.get("gamemode", "chess"))
     gamemode = gamemodes.Gamemode.get(gamemode_name)
 
@@ -67,7 +65,7 @@ def wstest():
     return render_template('wstest.html')
 
 
-def main():
+def run():
     # Get some options
     gamemode, options = Gamemode.get_from_config()
     matchmakers = int(config_file.get("submission_runner.matchmakers"))
@@ -80,10 +78,3 @@ def main():
     for i in range(matchmakers):
         matchmaker = Matchmaker(gamemode, options, seconds_per_run)
         matchmaker.start()
-
-    # Serve webpages
-    app.run(host="0.0.0.0", port=8080)
-
-
-if __name__ == "__main__":
-    main()
