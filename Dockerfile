@@ -10,12 +10,15 @@ RUN addgroup -S docker \
 # Install python
 RUN apk --update upgrade \
 && apk add --update python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers make \
-&& ln -sf python3 /usr/bin/python \
-&& python3 -m ensurepip \
-&& pip3 install --upgrade pip setuptools wheel numpy gevent
+&& ln -sf python3 /usr/bin/python
 
+# Add python requirements as user
+USER subrunner
+RUN python3 -m ensurepip \
+&& python3 -m pip install --upgrade pip setuptools wheel numpy gevent
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
+USER root
 
 # Add scripts
 VOLUME ["/tmp/sandbox"]

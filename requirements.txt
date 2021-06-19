@@ -11,3 +11,4 @@ numpy~=1.20.2
 Werkzeug~=1.0.1
 gunicorn
 gevent
+gevent-websocket
