@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 ~/runner/main.py
+python runner/main.py

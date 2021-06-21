@@ -1,5 +1,6 @@
 import builtins
 import itertools
+import logging
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -8,7 +9,8 @@ from typing import Iterator, Callable, Optional, Any
 
 import chess
 
-from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.connection import Connection, ConnectionNotActiveError
+from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
 
 
 @unique
@@ -87,10 +89,14 @@ class HandshakeFailedError(RuntimeError):
         super().__init__()
 
 
-class Connection:
+class MessagePrintConnection(Connection):
     _in_stream: Iterator[Message]
 
     def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
+        # Set up state
+        self._done = False
+        self._prints = []
+
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
         self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
@@ -98,13 +104,41 @@ class Connection:
 
         # Connect input
         in_stream_text = in_stream if in_stream is not None else _input_receiver()
-        self._in_stream = Connection._make_messages_iterator(in_stream_text)
+        self._in_stream = MessagePrintConnection._make_messages_iterator(in_stream_text)
         self._in_key = None
         self._handshake_in()
 
-    @property
-    def receive(self):
-        return self._in_stream
+    def get_prints(self) -> str:
+        return "\n".join(self._prints)
+
+    def close(self):
+        self.send_message(Message(self._out_key, MessageType.END, {}))
+
+    def get_next_message_data(self):
+        if self._done:
+            raise ConnectionNotActiveError()
+
+        for message in self._in_stream:
+            if message.message_type == MessageType.PRINT:
+                self._prints.append(message.data)
+            elif message.message_type == MessageType.RESULT:
+                if isinstance(message.data, FailsafeError):
+                    logging.error(str(message.data))
+                    self._done = True
+                    raise ConnectionNotActiveError()
+                return message.data
+            elif message.message_type == MessageType.END:
+                self._done = True
+                raise ConnectionNotActiveError()
+
+        self._done = True
+        self.get_next_message_data()  # Force an except
+
+    def send_call(self, method_name, method_args, method_kwargs):
+        self._send("call", method_name=method_name, method_args=method_args, method_kwargs=method_kwargs)
+
+    def send_ping(self):
+        self._send("ping")
 
     def _handshake_out(self):
         message = Message(None, MessageType.NEW_KEY, self._out_key)
@@ -112,16 +146,14 @@ class Connection:
 
     def _handshake_in(self):
         prints = []
-        while True:
-            try:
-                message = next(self._in_stream)
-            except StopIteration:
-                raise HandshakeFailedError([p.data for p in prints])
+        for message in self._in_stream:
             if message.message_type == MessageType.NEW_KEY:
                 self._in_stream = itertools.chain(prints, self._in_stream)
                 return
             if message.message_type == MessageType.PRINT:
                 prints.append(message)
+
+        raise HandshakeFailedError([p.data for p in prints])
 
     @staticmethod
     def _make_messages_iterator(lines: Iterator[str]) -> Iterator[Message]:
@@ -132,11 +164,15 @@ class Connection:
             if line.isspace() or line == "":
                 continue
 
-            message = Connection._process_line(key, line)
+            message = MessagePrintConnection._process_line(key, line)
 
             # Update key if message told us to
             if message.message_type == MessageType.NEW_KEY:
                 key = message.data
+
+            if message.message_type == MessageType.END:
+                yield message
+                return
 
             yield message
 
@@ -156,7 +192,7 @@ class Connection:
     def _process_line(key: int, line: str) -> "Message":
         # Check for commands
         try:
-            message = Connection._message_from_string(line)
+            message = MessagePrintConnection._message_from_string(line)
         except MessageParseError:
             # No match => assume print statement
             return Message(key, MessageType.PRINT, line)
@@ -173,16 +209,19 @@ class Connection:
 
         return message
 
-    def send(self, message_type: MessageType, data=None):
-        message = Message(self._out_key, message_type, data)
-        self.send_message(message)
-
-    def send_message(self, message: Message):
-        s = json.dumps(message, cls=Encoder)
-        self._out_handler(s)
+    def _send(self, instruction, **kwargs):
+        self.send_result({"type": instruction, **kwargs})
 
     def send_result(self, data):
-        self.send(MessageType.RESULT, data)
+        message = Message(self._out_key, MessageType.RESULT, data)
+        self.send_message(message)
+
+    def send_message(self, message):
+        if self._done:
+            raise ConnectionNotActiveError()
+
+        s = json.dumps(message, cls=Encoder)
+        self._out_handler(s)
 
 
 class Encoder(json.JSONEncoder):
@@ -190,6 +229,7 @@ class Encoder(json.JSONEncoder):
         super().__init__(*args, **kwargs)
         self._encoders = {Message: Encoder._message,
                           MissingFunctionError: Encoder._missing_function_error,
+                          FailsafeError: Encoder._failsafe_error,
                           ExceptionTraceback: Encoder._exception_trace,
                           chess.Board: Encoder._chessboard,
                           chess.Move: Encoder._chess_move}
@@ -204,6 +244,11 @@ class Encoder(json.JSONEncoder):
     @staticmethod
     def _missing_function_error(e: MissingFunctionError):
         return {'__custom_type': 'missing_function_error',
+                'str': str(e)}
+
+    @staticmethod
+    def _failsafe_error(e: FailsafeError):
+        return {'__custom_type': 'failsafe_error',
                 'str': str(e)}
 
     @staticmethod
@@ -233,6 +278,7 @@ class Decoder(json.JSONDecoder):
         json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
         self._decoders = {'message': Decoder._message,
                           'missing_function_error': Decoder._missing_function_error,
+                          'failsafe_error': Decoder._failsafe_error,
                           'exception_trace': Decoder._exception_trace,
                           'chessboard': Decoder._chessboard,
                           'chess_move': Decoder._chess_move}
@@ -244,6 +290,10 @@ class Decoder(json.JSONDecoder):
     @staticmethod
     def _missing_function_error(e: dict):
         return MissingFunctionError(e['str'])
+
+    @staticmethod
+    def _failsafe_error(e: dict):
+        return FailsafeError(e['str'])
 
     @staticmethod
     def _exception_trace(e: dict):

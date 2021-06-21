@@ -1,10 +1,25 @@
 import builtins
+import os
 import sys
 import traceback
 
-from sandbox import player_import
-from shared.exceptions import MissingFunctionError, ExceptionTraceback
-from shared.messages import MessageType, Connection
+from sandbox import player_import, info
+from shared.exceptions import MissingFunctionError, ExceptionTraceback, FailsafeError
+from shared.message_connection import MessagePrintConnection
+from shared.connection import ConnectionTimedOutError, ConnectionNotActiveError
+
+
+def failsafes():
+    # Check nothing is writable
+    for path in info.get_all_writable():
+        is_dir = os.path.isdir(path)
+        if is_dir:
+            path = os.path.join(path, "test.txt")
+        if not is_dir:
+            if path.startswith("/dev") or path.startswith("/proc"):
+                continue
+        if info.write_until_full(path, remove=is_dir) == "No Limit":
+            raise FailsafeError(f"Writable {'directory' if is_dir else 'file'}: " + path)
 
 
 def call(method_name, method_args, method_kwargs):
@@ -17,20 +32,25 @@ def ping():
     return "pong"
 
 
-def get_instructions(messages):
-    for message in messages:
-        if message.is_end():
-            break
-        elif message.message_type != MessageType.RESULT:
-            continue
-        else:
-            yield message.data
+def get_info():
+    return info.get_info()
+
+
+def get_instructions(connection):
+    while True:
+        try:
+            yield connection.get_next_message_data()
+        except (ConnectionTimedOutError, ConnectionNotActiveError):
+            return
 
 
 def main():
-    connection = Connection()
-    in_stream = connection.receive
-    instructions = get_instructions(in_stream)
+    connection = MessagePrintConnection()
+    instructions = get_instructions(connection)
+
+    # Check that we haven't got any security holes
+    if os.getenv("DEBUG").lower().startswith("t"):
+        failsafes()
 
     # Reduce things that can accidentally go wrong
     def fake_input(*args, **kwargs):
@@ -44,7 +64,8 @@ def main():
             t = instruction["type"]
             del instruction["type"]
             dispatch = {"call": call,
-                        "ping": ping}[t]
+                        "ping": ping,
+                        "info": get_info}[t]
 
             # Execute
             data = dispatch(**instruction)

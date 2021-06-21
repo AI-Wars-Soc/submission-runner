@@ -5,7 +5,7 @@ import subprocess
 import urllib.request
 import numpy as np
 from time import time
-from shared.messages import Connection
+from shared.connection import Connection
 
 
 def connect(dom):
@@ -33,7 +33,7 @@ def readable(path):
 
 
 def get_all_writable():
-    result = subprocess.run(["find", "/", "-writable"], stdout=subprocess.PIPE)
+    result = subprocess.run(["find", "/", "-writable"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return [path for path in result.stdout.decode().splitlines() if not path.endswith("Permission denied")]
 
 
@@ -54,27 +54,29 @@ def get_system_info():
         return e
 
 
-def write_until_full(path):
-    mega = "a" * 1024 * 1024
+MEGABYTE = "a" * 1024 * 1024
+
+
+def write_until_full(path, remove=False):
     written = 0
     try:
         with open(path, "w") as f:
-            for i in range(128):
-                f.write(mega)
+            for i in range(16):
+                f.write(MEGABYTE)
                 f.flush()
                 written += 1024 * 1024
     except PermissionError:
         return "Not writable"
     except IOError as e:
-        print(e)
         return f"{written / (1024 * 1024)}MB"
     except Exception as e:
         return str(e)
     finally:
-        try:
-            os.remove(path)
-        except Exception as e:
-            pass
+        if remove:
+            try:
+                os.remove(path)
+            except Exception as e:
+                pass
     return "No Limit"
 
 
@@ -145,27 +147,24 @@ def starts_with_one(s: str, ls):
     return False
 
 
-print("Start Print")
-connection = Connection()
-in_stream = connection.receive
-all_writable = get_all_writable()
-writable_dirs = [path for path in all_writable if os.path.isdir(path)]
-writable_files = [path for path in all_writable if os.path.isfile(path)]
-writable_others = [path for path in all_writable if (not os.path.isdir(path)) and (not os.path.isfile(path))]
-results = {"input": next(in_stream),
-           "has_internet": connect('http://google.com'),
-           "hostname_uses_loopback": hostname_uses_loopback(),
-           "dirs": {path: {"readable": readable(path), "writable": writable(path)}
-                    for path in ["/", "/home", "/home/sandbox/", "~/", "./", "/var/tmp", "/tmp"]},
-           "all_writable_files": writable_files,
-           "all_writable_dirs": writable_dirs,
-           "all_writable_dirs_sizes": {path: write_until_full(path + "/test.txt")
-                                       for path in writable_dirs},
-           "all_writable_others": writable_others,
-           "system": get_system_info(),
-           "user": {"uid": os.getuid()},
-           "process": {"cwd": os.getcwd(), "pid": os.getpid()},
-           "numpy_benchmark": numpy_speed_test()}
-print("Mid Print")
-connection.send_result(results)
-print("End Print")
+def get_info():
+    print("Start Print")
+    all_writable = get_all_writable()
+    writable_dirs = [path for path in all_writable if os.path.isdir(path)]
+    writable_files = [path for path in all_writable if os.path.isfile(path)]
+    writable_others = [path for path in all_writable if (not os.path.isdir(path)) and (not os.path.isfile(path))]
+    results = {"has_internet": connect('http://google.com'),
+               "hostname_uses_loopback": hostname_uses_loopback(),
+               "dirs": {path: {"readable": readable(path), "writable": writable(path)}
+                        for path in ["/", "/home", "/home/sandbox/", "~/", "./", "/var/tmp", "/tmp"]},
+               "all_writable_files": writable_files,
+               "all_writable_dirs": writable_dirs,
+               "all_writable_dirs_sizes": {path: write_until_full(path + "/test.txt")
+                                           for path in writable_dirs},
+               "all_writable_others": writable_others,
+               "system": get_system_info(),
+               "user": {"uid": os.getuid()},
+               "process": {"cwd": os.getcwd(), "pid": os.getpid()},
+               "numpy_benchmark": numpy_speed_test()}
+    print("End Print")
+    return results

@@ -1,16 +1,20 @@
-import json
-import logging
-import os
-from typing import Dict, Callable
+import abc
+import random
+import time
+from concurrent.futures.thread import ThreadPoolExecutor
+from typing import List, Tuple, Union
 
+import chess
 from cuwais.common import Outcome, Result
 from cuwais.config import config_file
 
-from runner import parsers
-from runner.middleware import Middleware, ContainerConnectionFailedError
-from runner.parsers import ParsedResult, SingleResult
+from runner.logger import logger
+from runner.middleware import Middleware
+from runner.results import ParsedResult, SingleResult
 from runner.sandbox import TimedContainer
-from shared.messages import HandshakeFailedError
+from shared.exceptions import MissingFunctionError, ExceptionTraceback
+from shared.message_connection import HandshakeFailedError
+from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 _type_names = {
     "boolean": lambda b: str(b).lower().startswith("t"),
@@ -21,86 +25,263 @@ _type_names = {
 
 
 class Gamemode:
-    def __init__(self, name, script, parser: Callable[[Middleware], ParsedResult], players, options):
-        self.name = str(name)
-        self.script = str(script)
-        self.parse = parsers.get(parser)
-        self.players = int(players)
-        self.options = dict(options)
+    def __init__(self, name: str, players: List[str], options: dict):
+        self._name = str(name)
+        self._players = list(players)
+        self._options = {"turn_time": 10, **dict(options)}
 
-    @staticmethod
-    def get(name):
-        return _gamemodes[name]
+    @property
+    def player_count(self):
+        return len(self._players)
 
-    def create_env_vars(self, **kwargs) -> Dict[str, str]:
-        possible_parameters = {k for k in self.options.keys()}
-        required_parameters = {k for k in possible_parameters if "default" not in self.options[k]}
+    @abc.abstractmethod
+    def _setup(self, **options):
+        """Gets the board that will be used by a game instance"""
+        pass
 
-        extras = {k for k in kwargs.keys() if k not in possible_parameters}
-        if len(extras) != 0:
-            raise TypeError(f"Unknown parameter(s): {', '.join(extras)}")
+    def _filter_board(self, board, player: int):
+        """Used to hide parts of the board, or transform the board into a form used by the player given"""
+        return board
 
-        missing = {k for k in required_parameters if k not in kwargs.keys()}
-        if len(extras) != 0:
-            raise TypeError(f"Missing parameter(s): {', '.join(missing)}")
+    def _parse_move(self, move):
+        """Optionally used to parse the returned move, eg if the AI can return a string or an object"""
+        return move
 
-        env_vars = {}
-        for key, data in self.options.items():
-            if key in kwargs:
-                env_vars[key] = kwargs[key]
-            else:
-                env_vars[key] = data["default"]
+    @abc.abstractmethod
+    def _is_move_legal(self, board, move) -> bool:
+        """Checks if a move can be made with a given board"""
+        pass
 
-            target_type = _type_names[data["type"]]
-            env_vars[key] = str(target_type(env_vars[key]))
+    @abc.abstractmethod
+    def _apply_move(self, board, move):
+        """Applies the move to the board and returns the new board"""
+        pass
 
-        return env_vars
+    @abc.abstractmethod
+    def _is_win(self, board, player):
+        """Checks if the board is in a won position given the player just moved"""
+        pass
 
-    def run(self, submission_hashes=None, options=None) -> ParsedResult:
+    @abc.abstractmethod
+    def _is_loss(self, board, player):
+        """Checks if the board is in a lost position given the player just moved"""
+        pass
+
+    @abc.abstractmethod
+    def _is_draw(self, board, player):
+        """Checks if the board is in a drawn position given the player just moved"""
+        pass
+
+    @abc.abstractmethod
+    def _encode_move(self, move, player) -> str:
+        """Converts a move to a string form for storing or transmitting"""
+        pass
+
+    @abc.abstractmethod
+    def _encode_board(self, board) -> str:
+        """Converts a board to a string form for storing or transmitting"""
+        pass
+
+    def run(self, submission_hashes=None, options=None, turns=2 << 32, connections=None) -> ParsedResult:
         if submission_hashes is None:
             submission_hashes = []
+        submission_hashes = list(submission_hashes)
         if options is None:
             options = dict()
-        logging.info("Request for gamemode " + self.name)
+        options = {**self._options, **options}
+        if connections is None:
+            connections = []
+        connections: List[Connection]
+
+        logger.debug(f"Request for gamemode {self._name}")
+
+        if len(connections) + len(submission_hashes) != self.player_count:
+            raise RuntimeError("Invalid number of players total")
 
         # Create containers
-        timeout = int(config_file.get("submission_runner.host_parser_timeout_seconds"))
+        timeout = (self.player_count + 1) * int(options.get("turn_time", 10))
+
+        def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, Connection]]:
+            new_container = TimedContainer(timeout, submission_hash)
+            try:
+                new_connection = new_container.run()
+            except HandshakeFailedError as e:
+                each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
+                            for _ in range(self.player_count)]
+                for i_hash, h in enumerate(submission_hashes):
+                    if h == submission_hash:
+                        each_res[i_hash].printed = "\n".join(e.prints)
+
+                logger.error(f"Failed to handshake with container! {e.prints}")
+                return None, ParsedResult("", [], each_res)
+            new_connection.ping()
+            return new_container, new_connection
+
         containers = []
         try:
-            for submission_hash in submission_hashes:
-                container = TimedContainer(timeout, submission_hash)
+            logger.debug("Creating all required timed containers: ")
+
+            # Create all required AIs
+            executor = ThreadPoolExecutor(max_workers=len(submission_hashes))
+            for container, connection in executor.map(connect, submission_hashes):
+                if container is None:
+                    return connection
                 containers.append(container)
+                connections.append(connection)
 
             # Set up linking through middleware
-            env_vars = self.create_env_vars(**options)
-            middleware = Middleware(self.script, containers, env_vars)
+            logger.debug("Attaching middleware: ")
+            middleware = Middleware(connections)
 
             # Run
-            res = self.parse(middleware)
-        except ContainerConnectionFailedError as e:
-            each_res = [SingleResult(Outcome.Draw, False, "", Result.BrokenEntryPoint, "") for _ in submission_hashes]
-            each_res[e.container_index].printed = "\n".join(e.prints)
+            logger.debug("Running...")
+            outcomes, result, moves, initial_board = self._run_loop(middleware, options, turns)
 
-            return ParsedResult([], each_res)
+            # Gather
+            logger.debug("Completed game, shutting down containers...")
+            middleware.complete_all()
+            prints = []
+            for i in range(self.player_count):
+                prints.append(middleware.get_player_prints(i))
+
+            results = [SingleResult(outcome, result == Result.ValidGame, name, result, prints)
+                       for outcome, name, prints in zip(outcomes, self._players, prints)]
+
+            parsed_result = ParsedResult(initial_board, moves, results)
         finally:
             # Clean up
             for container in containers:
                 container.stop()
 
-        return res
+        logger.debug(f"Done running gamemode {self._name}!")
+        return parsed_result
+
+    def _run_loop(self, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
+        moves = []
+        time_remaining = [options["turn_time"]] * self.player_count
+        board = self._setup(**options)
+        initial_encoded_board = self._encode_board(board)
+
+        player_turn = 0
+
+        try:
+            # Calculate latencies
+            latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(self.player_count)]
+        except (ConnectionNotActiveError, ConnectionTimedOutError):
+            # Shouldn't crash, it's our fault if it does :(
+            return [Outcome.Draw] * self.player_count, Result.UnknownResultType, moves, initial_encoded_board
+        latency = sum(latency) / len(latency)
+        logger.debug(f"Latency for container communication: {latency}s")
+
+        def make_win(winner):
+            res = [Outcome.Loss] * self.player_count
+            res[winner] = Outcome.Win
+            return res
+
+        def make_loss(loser):
+            res = [Outcome.Win] * self.player_count
+            res[loser] = Outcome.Loss
+            return res
+
+        for _ in range(turns):
+            start_time = time.time_ns()
+            try:
+                move = middleware.call(player_turn, "make_move", board=self._filter_board(board, player_turn),
+                                       time_remaining=time_remaining[player_turn])
+            except ConnectionNotActiveError:
+                return make_loss(player_turn), Result.ProcessKilled, moves, initial_encoded_board
+            except ConnectionTimedOutError:
+                return make_loss(player_turn), Result.Timeout, moves, initial_encoded_board
+            end_time = time.time_ns()
+
+            t = (end_time - start_time) / 1e9
+            t -= latency
+            time_remaining[player_turn] -= t
+
+            if time_remaining[player_turn] <= 0:
+                return make_loss(player_turn), Result.Timeout, moves, initial_encoded_board
+
+            if isinstance(move, MissingFunctionError):
+                return make_loss(player_turn), Result.BrokenEntryPoint, moves, initial_encoded_board
+
+            if isinstance(move, ExceptionTraceback):
+                return make_loss(player_turn), Result.Exception, moves, initial_encoded_board
+
+            move = self._parse_move(move)
+
+            logger.debug(f"Got move {move}")
+
+            if not self._is_move_legal(board, move):
+                logger.debug(f"Move is not legal {move}")
+                return make_loss(player_turn), Result.IllegalMove, moves, initial_encoded_board
+
+            moves.append(self._encode_move(move, player_turn))
+            board = self._apply_move(board, move)
+
+            if self._is_win(board, player_turn):
+                return make_win(player_turn), Result.ValidGame, moves, initial_encoded_board
+
+            if self._is_loss(board, player_turn):
+                return make_loss(player_turn), Result.ValidGame, moves, initial_encoded_board
+
+            if self._is_draw(board, player_turn):
+                return [Outcome.Draw] * self.player_count, Result.ValidGame, moves, initial_encoded_board
+
+            player_turn += 1
+            player_turn %= self.player_count
+
+        return [Outcome.Draw] * self.player_count, Result.GameUnfinished, moves, initial_encoded_board
+
+    @staticmethod
+    def get(gamemode_name):
+        return {"chess": ChessGamemode()}.get(gamemode_name, None)
+
+    @staticmethod
+    def get_from_config():
+        gamemode = Gamemode.get(config_file.get("gamemode.id").lower())
+        options = config_file.get("gamemode.options")
+        return gamemode, options
 
 
-def _parse():
-    script_dir = os.path.dirname(__file__)
-    rel_path = "gamemodes.json"
-    abs_file_path = os.path.join(script_dir, rel_path)
+class ChessGamemode(Gamemode):
+    def __init__(self):
+        super(ChessGamemode, self).__init__(name="chess", players=["white", "black"], options={"chess_960": True})
 
-    with open(abs_file_path, "r") as fp:
-        data = json.load(fp)
+    def _setup(self, chess_960, **kwargs):
+        if chess_960:
+            return chess.Board.from_chess960_pos(random.randint(0, 959))
 
-    for name, info in data.items():
-        yield Gamemode(name, info["script"], info.get("parser", "default"),
-                       info["players"], info.get("options", dict()))
+        return chess.Board()
 
+    def _is_win(self, board, move):
+        return board.is_checkmate()
 
-_gamemodes = {gm.name: gm for gm in _parse()}
+    def _is_draw(self, board, move):
+        return board.is_stalemate() or board.is_insufficient_material() or board.is_seventyfive_moves()
+
+    def _is_loss(self, board, move):
+        return False
+
+    def _parse_move(self, move):
+        if isinstance(move, str):
+            move = chess.Move.from_uci(move)
+        return move
+
+    def _is_move_legal(self, board, move):
+        if move is None:
+            return False
+        if not isinstance(move, chess.Move):
+            return False
+        if move not in board.legal_moves:
+            return False
+        return True
+
+    def _apply_move(self, board: chess.Board, move: chess.Move):
+        board.push(move)
+        return board
+
+    def _encode_move(self, move: chess.Move, player: int) -> str:
+        return move.uci()
+
+    def _encode_board(self, board: chess.Board) -> str:
+        return board.fen()
