@@ -152,7 +152,7 @@ class TimedContainer:
     def _lock_down(self):
         # Set write limits
         self._container.exec_run("chmod -R ugo=rx /home/sandbox/")  # TODO: Very slow (~2s) because of CoW?
-        # logger.debug(self._container.exec_run("ls -alR /home/sandbox").output.decode())
+        # logger.debug(gamemode._container.exec_run("ls -alR /home/sandbox").output.decode())
 
     def _timeout_method(self, timeout: int):
         try:

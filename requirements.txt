@@ -3,7 +3,7 @@ docker~=4.4.4
 flask~=1.1.2
 requests~=2.25.1
 chess~=1.3.3
-cuwais-common~=1.2.2-dev2106051
+cuwais-common~=1.3.0.dev2106212
 SQLAlchemy~=1.4.3
 psycopg2~=2.8.6
 python-socketio

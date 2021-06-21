@@ -6,7 +6,7 @@ from cuwais.config import config_file
 from socketio import Namespace
 import queue
 
-from runner.gamemodes import Gamemode
+from runner.gamemode_runner import Gamemode
 from runner.logger import logger
 from shared.message_connection import Encoder
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError

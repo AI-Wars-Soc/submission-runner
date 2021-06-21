@@ -2,10 +2,11 @@ import json
 
 import flask
 from cuwais.config import config_file
+from cuwais.gamemodes import Gamemode
 from flask import request, Response, abort
 from werkzeug.middleware.profiler import ProfilerMiddleware
 
-from runner import gamemodes
+from runner import gamemode_runner
 from shared.message_connection import Encoder
 
 app = flask.Flask(__name__)
@@ -24,7 +25,7 @@ with open("/run/secrets/secret_key") as secrets_file:
 @app.route('/run', methods=['GET'])
 def run_endpoint():
     gamemode_name = str(request.args.get("gamemode", "chess"))
-    gamemode = gamemodes.Gamemode.get(gamemode_name)
+    gamemode = Gamemode.get(gamemode_name)
 
     if gamemode is None:
         abort(404)
@@ -43,6 +44,6 @@ def run_endpoint():
         if v in options:
             del options[v]
 
-    parsed = gamemode.run(submissions, options, moves)
+    parsed = gamemode_runner.run(gamemode, submissions, options, moves)
 
     return Response(json.dumps(parsed, cls=Encoder), status=200, mimetype='application/json')
