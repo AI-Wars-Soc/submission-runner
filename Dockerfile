@@ -29,11 +29,10 @@ COPY runner/default_config.yml /home/subrunner/default_config.yml
 ENV PYTHONPATH="/home/subrunner:/home/subrunner/runner:${PYTHONPATH}"
 
 # Set up repositories
+USER subrunner
 RUN mkdir /home/subrunner/repositories
 VOLUME /home/subrunner/repositories
 
-# Set user
+# Set user dir
 WORKDIR /home/subrunner
-USER subrunner
-
 CMD [ "bash", "runner/run.sh" ]
