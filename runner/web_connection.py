@@ -11,7 +11,7 @@ from runner.logger import logger
 from shared.message_connection import Encoder
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
-sio = socketio.Server()
+sio = socketio.Server(async_mode='eventlet')
 
 
 class SocketConnection(Connection):
@@ -103,3 +103,6 @@ class WebConnection(Namespace):
             connection: SocketConnection
             connection = session["connection"]
             connection.register_response(data)
+
+
+sio.register_namespace(WebConnection('/play_game'))

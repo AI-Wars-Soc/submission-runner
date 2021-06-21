@@ -9,6 +9,5 @@ psycopg2~=2.8.6
 python-socketio
 numpy~=1.20.2
 Werkzeug~=1.0.1
+eventlet~=0.31.0
 gunicorn
-gevent
-gevent-websocket
