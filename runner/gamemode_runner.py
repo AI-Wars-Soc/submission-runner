@@ -25,6 +25,8 @@ def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32,
         connections = []
     connections: List[Connection]
 
+    turns = int(turns)
+
     logger.debug(f"Request for gamemode {gamemode.name}")
 
     if len(connections) + len(submission_hashes) != gamemode.player_count:
@@ -91,7 +93,7 @@ def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32,
 
 def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
     moves = []
-    time_remaining = [options["turn_time"]] * gamemode.player_count
+    time_remaining = [int(options["turn_time"])] * gamemode.player_count
     board = gamemode.setup(**options)
     initial_encoded_board = gamemode.encode_board(board)
 
