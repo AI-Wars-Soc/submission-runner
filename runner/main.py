@@ -1,6 +1,6 @@
-# from eventlet import monkey_patch
+from eventlet import monkey_patch
 
-# monkey_patch()
+monkey_patch()
 
 import cuwais.database
 import eventlet.wsgi
