@@ -6,3 +6,6 @@ submission_runner:
   sandbox_run_timeout_seconds: 360
   sandbox_memory_limit: 256m
   sandbox_cpu_count: 0.5
+gamemode:
+  options:
+    player_turn_time: 600

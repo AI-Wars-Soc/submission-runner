@@ -6,12 +6,13 @@ from cuwais.config import config_file
 from socketio import Namespace
 import queue
 
+from runner import gamemode_runner
 from runner.gamemode_runner import Gamemode
 from runner.logger import logger
 from shared.message_connection import Encoder
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
-sio = socketio.Server(async_mode='eventlet')
+sio = socketio.Server(async_mode='eventlet', logger=logger, always_connect=True)
 
 
 class SocketConnection(Connection):
@@ -66,7 +67,7 @@ class GamemodeThread(threading.Thread):
     def run(self):
         gamemode, options = Gamemode.get_from_config()
         options["turn_time"] = config_file.get("gamemode.options.player_turn_time")
-        result = gamemode.run(self.submissions, options, connections=[self.connection])
+        result = gamemode_runner.run(gamemode, self.submissions, options, connections=[self.connection])
 
         self.send_fn({"type": "result", "result": dict(result)})
 
@@ -93,9 +94,7 @@ class WebConnection(Namespace):
         logger.debug(f"Start Game {sid}: {data}")
 
         with self.session(sid) as session:
-            data_obj = json.loads(data)
-
-            GamemodeThread(session["connection"], data_obj["submissions"], _make_send_fn(self, sid)).start()
+            GamemodeThread(session["connection"], data["submissions"], _make_send_fn(self, sid)).start()
 
     def on_respond(self, sid, data):
         logger.debug(f"Respond {sid}: {data}")
@@ -105,4 +104,4 @@ class WebConnection(Namespace):
             connection.register_response(data)
 
 
-sio.register_namespace(WebConnection('/play_game'))
+sio.register_namespace(WebConnection('/'))
