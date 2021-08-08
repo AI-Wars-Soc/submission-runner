@@ -102,6 +102,7 @@ def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outc
     try:
         # Calculate latencies
         latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(gamemode.player_count)]
+        latency = [min(t, 0.1) for t in latency]  # Cap latency at 0.1s to prevent slow loris attack
     except (ConnectionNotActiveError, ConnectionTimedOutError):
         # Shouldn't crash, it's our fault if it does :(
         return [Outcome.Draw] * gamemode.player_count, Result.UnknownResultType, moves, initial_encoded_board

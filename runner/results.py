@@ -1,9 +1,6 @@
-import json
 from typing import List
 
 from cuwais.common import Outcome, Result
-
-from shared.message_connection import Encoder
 
 
 class SingleResult(dict):

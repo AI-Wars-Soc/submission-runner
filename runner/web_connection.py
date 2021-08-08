@@ -9,7 +9,7 @@ import queue
 from runner import gamemode_runner
 from runner.gamemode_runner import Gamemode
 from runner.logger import logger
-from shared.message_connection import Encoder
+from shared.message_connection import Encoder, Decoder
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 sio = socketio.Server(async_mode='eventlet', logger=logger, always_connect=True)
@@ -93,11 +93,33 @@ class WebConnection(Namespace):
     def on_start_game(self, sid, data):
         logger.debug(f"Start Game {sid}: {data}")
 
+        if "submissions" not in data:
+            self.disconnect(sid)
+            return
+
+        if not all(isinstance(s, str) for s in data):
+            self.disconnect(sid)
+            return
+
         with self.session(sid) as session:
             GamemodeThread(session["connection"], data["submissions"], _make_send_fn(self, sid)).start()
 
     def on_respond(self, sid, data):
         logger.debug(f"Respond {sid}: {data}")
+
+        # Decode data and check validity
+        try:
+            data = json.loads(data, cls=Decoder)
+        except json.JSONDecodeError:
+            self.disconnect(sid)
+            return
+
+        if "value" not in data:
+            self.disconnect(sid)
+            return
+
+        data = data["value"]
+
         with self.session(sid) as session:
             connection: SocketConnection
             connection = session["connection"]
