@@ -25,7 +25,7 @@ VOLUME ["/tmp/sandbox"]
 COPY runner /home/subrunner/runner
 COPY sandbox /home/subrunner/sandbox
 COPY shared /home/subrunner/shared
-ADD https://raw.githubusercontent.com/AI-Wars-Soc/common/main/default_config.yml /home/subrunner/default_config.yml
+ADD --chown=subrunner https://raw.githubusercontent.com/AI-Wars-Soc/common/main/default_config.yml /home/subrunner/default_config.yml
 ENV PYTHONPATH="/home/subrunner:/home/subrunner/runner:${PYTHONPATH}"
 
 # Set up repositories
