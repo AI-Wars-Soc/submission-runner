@@ -1,21 +1,23 @@
 # Dockerfile for sandbox api, allowing for new sandbox dockerfiles to be spun up when needed
-# Alpine
-FROM docker
+# Ubuntu
+FROM ubuntu:20.04
 
 # Add user
-RUN addgroup -S docker \
-&& adduser --disabled-password --shell /bin/bash subrunner subrunner \
-&& addgroup subrunner docker
+RUN groupadd docker \
+&& useradd subrunner -m -G docker
 
-# Install python
-RUN apk --update upgrade \
-&& apk add --update python3 bash git g++ postgresql-dev cargo gcc python3-dev libffi-dev musl-dev zlib-dev jpeg-dev linux-headers make \
+# Install from apt-get
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Europe/London \
+	PATH="/home/subrunner/.local/bin:${PATH}"
+RUN apt-get update \
+&& apt-get install -y docker python3 python3-pip bash git libpq-dev \
 && ln -sf python3 /usr/bin/python
 
 # Add python requirements as user
 USER subrunner
-RUN python3 -m ensurepip \
-&& python3 -m pip install --upgrade pip setuptools wheel numpy gevent
+RUN ls -al /home
+RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 USER root
