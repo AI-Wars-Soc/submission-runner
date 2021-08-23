@@ -2,21 +2,23 @@
 # Ubuntu
 FROM ubuntu:20.04
 
-# Add user
-RUN groupadd docker \
-&& useradd subrunner -m -G docker
-
 # Install from apt-get
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/London \
 	PATH="/home/subrunner/.local/bin:${PATH}"
 RUN apt-get update \
-&& apt-get install -y docker python3 python3-pip bash git libpq-dev \
+&& apt-get install -y python3 python3-pip bash git libpq-dev apt-utils \
 && ln -sf python3 /usr/bin/python
+
+# Install docker
+ADD https://get.docker.com/ /tmp/get_docker.sh
+RUN chmod +x /tmp/get_docker.sh && /tmp/get_docker.sh
+
+# Add user
+RUN useradd subrunner -m -G docker
 
 # Add python requirements as user
 USER subrunner
-RUN ls -al /home
 RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
