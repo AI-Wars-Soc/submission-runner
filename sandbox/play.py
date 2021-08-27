@@ -1,3 +1,4 @@
+import asyncio
 import builtins
 import os
 import sys
@@ -36,29 +37,33 @@ def get_info():
     return info.get_info()
 
 
-def get_instructions(connection):
+async def get_instructions(connection: MessagePrintConnection):
     while True:
         try:
-            yield connection.get_next_message_data()
+            yield await connection.get_next_message_data()
         except (ConnectionTimedOutError, ConnectionNotActiveError):
             return
 
 
-def main():
+async def main():
     connection = MessagePrintConnection()
     instructions = get_instructions(connection)
 
     # Check that we haven't got any security holes
     if os.getenv("DEBUG").lower().startswith("t"):
-        failsafes()
+        pass  # failsafes()
 
     # Reduce things that can accidentally go wrong
     def fake_input(*args, **kwargs):
         return ""
     builtins.input = fake_input
 
+    def fake_breakpoint(*args, **kwargs):
+        pass
+    builtins.breakpoint = fake_breakpoint
+
     # Fetch
-    for instruction in instructions:
+    async for instruction in instructions:
         try:
             # Decode
             t = instruction["type"]
@@ -71,15 +76,19 @@ def main():
             data = dispatch(**instruction)
 
             # Sendback
-            connection.send_result(data)
+            await connection.send_result(data)
         except MissingFunctionError as e:
-            connection.send_result(e)
+            await connection.send_result(e)
+            break
         except Exception:
             traceback.print_exc()
             tb = traceback.format_exception(*sys.exc_info())
 
-            connection.send_result(ExceptionTraceback(tb))
+            await connection.send_result(ExceptionTraceback(tb))
+            break
+
+    await connection.complete()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

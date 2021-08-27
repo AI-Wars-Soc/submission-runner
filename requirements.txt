@@ -1,4 +1,5 @@
-docker~=4.4.4
+aiodocker~=0.18.0
+aiofile~=3.7.1
 requests~=2.25.1
 chess~=1.6.1
 cuwais-common~=1.3.1

@@ -11,20 +11,20 @@ class Middleware:
     def player_count(self):
         return len(self._connections)
 
-    def complete_all(self):
-        return [self._connections[player_id].complete() for player_id in range(self.player_count)]
+    async def complete_all(self):
+        return [await self._connections[player_id].complete() for player_id in range(self.player_count)]
 
-    def call(self, player_id, method_name, *args, **kwargs) -> Any:
+    async def call(self, player_id, method_name, *args, **kwargs) -> Any:
         """Calls a function with name method_name and args and kwargs as given.
         Raises ConnectionNotActiveError if the container is no longer active,
         or raises ConnectionTimedOutError if the container times out while we are waiting"""
-        return self._connections[player_id].call(method_name, *args, **kwargs)
+        return await self._connections[player_id].call(method_name, *args, **kwargs)
 
-    def ping(self, player_id) -> float:
+    async def ping(self, player_id) -> float:
         """Records the time taken for a message to be sent, parsed and responded to.
         Raises ConnectionNotActiveError if the container is no longer active,
         or raises ConnectionTimedOutError if the container times out while we are waiting"""
-        return self._connections[player_id].ping()
+        return await self._connections[player_id].ping()
 
     def get_player_prints(self, i):
         return self._connections[i].get_prints()

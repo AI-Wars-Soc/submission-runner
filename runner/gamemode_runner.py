@@ -1,6 +1,6 @@
 import time
-from concurrent.futures.thread import ThreadPoolExecutor
-from typing import List, Tuple, Union
+from contextlib import asynccontextmanager
+from typing import List, Tuple
 
 from cuwais.common import Outcome, Result
 from cuwais.gamemodes import Gamemode
@@ -8,13 +8,28 @@ from cuwais.gamemodes import Gamemode
 from runner.logger import logger
 from runner.middleware import Middleware
 from runner.results import ParsedResult, SingleResult
-from runner.sandbox import TimedContainer
+from runner import sandbox
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
 from shared.message_connection import HandshakeFailedError
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 
-def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32, connections=None) -> ParsedResult:
+@asynccontextmanager
+async def make_container_socket(gamemode: Gamemode, timeout: int, submission_hash):
+    try:
+        async with sandbox.run(timeout, submission_hash) as new_connection:
+            await new_connection.ping()
+            yield new_connection
+    except HandshakeFailedError as e:
+        each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
+                    for _ in range(gamemode.player_count)]
+        each_res[0].printed = "\n".join(e.prints)
+
+        logger.error(f"Failed to handshake with container! {e.prints}")
+        yield ParsedResult("", [], each_res)
+
+
+async def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32, connections=None) -> ParsedResult:
     if submission_hashes is None:
         submission_hashes = []
     submission_hashes = list(submission_hashes)
@@ -32,66 +47,41 @@ def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32,
     if len(connections) + len(submission_hashes) != gamemode.player_count:
         raise RuntimeError("Invalid number of players total")
 
-    # Create containers
+    # Create containers recursively
     timeout = (gamemode.player_count + 1) * int(options.get("turn_time", 10))
+    if len(submission_hashes) != 0:
+        async with make_container_socket(gamemode, timeout, submission_hashes[0]) as new_connection:
+            if isinstance(new_connection, ParsedResult):
+                return new_connection
 
-    def connect(submission_hash) -> Union[Tuple[None, ParsedResult], Tuple[TimedContainer, Connection]]:
-        new_container = TimedContainer(timeout, submission_hash)
-        try:
-            new_connection = new_container.run()
-        except HandshakeFailedError as e:
-            each_res = [SingleResult(Outcome.Draw, False, "", Result.UnknownResultType, "")
-                        for _ in range(gamemode.player_count)]
-            for i_hash, h in enumerate(submission_hashes):
-                if h == submission_hash:
-                    each_res[i_hash].printed = "\n".join(e.prints)
+            connections.append(new_connection)
+            return await run(gamemode, submission_hashes[1:], options, turns, connections)
 
-            logger.error(f"Failed to handshake with container! {e.prints}")
-            return None, ParsedResult("", [], each_res)
-        new_connection.ping()
-        return new_container, new_connection
+    # Set up linking through middleware
+    logger.debug("Attaching middleware: ")
+    middleware = Middleware(connections)
 
-    containers = []
-    try:
-        logger.debug("Creating all required timed containers: ")
+    # Run
+    logger.debug("Running...")
+    outcomes, result, moves, initial_board = await _run_loop(gamemode, middleware, options, turns)
 
-        # Create all required AIs
-        executor = ThreadPoolExecutor(max_workers=len(submission_hashes))
-        for container, connection in executor.map(connect, submission_hashes):
-            if container is None:
-                return connection
-            containers.append(container)
-            connections.append(connection)
+    # Gather
+    logger.debug("Completed game, shutting down containers...")
+    await middleware.complete_all()
+    prints = []
+    for i in range(gamemode.player_count):
+        prints.append(middleware.get_player_prints(i))
 
-        # Set up linking through middleware
-        logger.debug("Attaching middleware: ")
-        middleware = Middleware(connections)
+    results = [SingleResult(outcome, result == Result.ValidGame, name, result, prints)
+               for outcome, name, prints in zip(outcomes, gamemode.players, prints)]
 
-        # Run
-        logger.debug("Running...")
-        outcomes, result, moves, initial_board = _run_loop(gamemode, middleware, options, turns)
-
-        # Gather
-        logger.debug("Completed game, shutting down containers...")
-        middleware.complete_all()
-        prints = []
-        for i in range(gamemode.player_count):
-            prints.append(middleware.get_player_prints(i))
-
-        results = [SingleResult(outcome, result == Result.ValidGame, name, result, prints)
-                   for outcome, name, prints in zip(outcomes, gamemode.players, prints)]
-
-        parsed_result = ParsedResult(initial_board, moves, results)
-    finally:
-        # Clean up
-        for container in containers:
-            container.stop()
+    parsed_result = ParsedResult(initial_board, moves, results)
 
     logger.debug(f"Done running gamemode {gamemode.name}!")
     return parsed_result
 
 
-def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
+async def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outcome], Result, List[str], str]:
     moves = []
     time_remaining = [int(options["turn_time"])] * gamemode.player_count
     board = gamemode.setup(**options)
@@ -101,8 +91,15 @@ def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outc
 
     try:
         # Calculate latencies
-        latency = [sum([middleware.ping(i) for _ in range(5)]) / 5 for i in range(gamemode.player_count)]
-        latency = [min(t, 0.1) for t in latency]  # Cap latency at 0.1s to prevent slow loris attack
+        pings = 5
+        latency = []
+        for i in range(gamemode.player_count):
+            tot = 0.0
+            for _ in range(pings):
+                tot += await middleware.ping(i)
+            tot /= pings
+            tot = min(tot, 0.2)  # Cap latency at 0.2s to prevent slow loris attack
+            latency.append(tot)
     except (ConnectionNotActiveError, ConnectionTimedOutError):
         # Shouldn't crash, it's our fault if it does :(
         return [Outcome.Draw] * gamemode.player_count, Result.UnknownResultType, moves, initial_encoded_board
@@ -122,8 +119,8 @@ def _run_loop(gamemode: Gamemode, middleware, options, turns) -> Tuple[List[Outc
     for _ in range(turns):
         start_time = time.time_ns()
         try:
-            move = middleware.call(player_turn, "make_move", board=gamemode.filter_board(board, player_turn),
-                                   time_remaining=time_remaining[player_turn])
+            move = await middleware.call(player_turn, "make_move", board=gamemode.filter_board(board, player_turn),
+                                         time_remaining=time_remaining[player_turn])
         except ConnectionNotActiveError:
             return make_loss(player_turn), Result.ProcessKilled, moves, initial_encoded_board
         except ConnectionTimedOutError:

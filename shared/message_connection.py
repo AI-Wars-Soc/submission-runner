@@ -1,11 +1,10 @@
 import builtins
-import itertools
 import logging
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
 import random
-from typing import Iterator, Callable, Optional, Any
+from typing import Iterator, Callable, Optional, Any, AsyncGenerator, Awaitable
 
 import chess
 
@@ -50,9 +49,9 @@ class MessageInvalidNewKey(MessageParseError):
 
 
 class MessageInvalidAttachedKey(MessageParseError):
-    def __init__(self, key: int):
+    def __init__(self, key: Optional[int]):
         self.key = key
-        super().__init__(self, "Invalid new key: " + hex(self.key))
+        super().__init__(self, "Invalid attached key: " + hex(self.key))
 
 
 class Message:
@@ -75,7 +74,7 @@ class Message:
 _input = builtins.input
 
 
-def _input_receiver(input_function=None) -> Iterator[str]:
+async def _input_receiver(input_function=None) -> AsyncGenerator[str, None]:
     if input_function is None:
         input_function = _input
     while True:
@@ -90,35 +89,32 @@ class HandshakeFailedError(RuntimeError):
 
 
 class MessagePrintConnection(Connection):
-    _in_stream: Iterator[Message]
+    _in_stream: AsyncGenerator[Message, None]
 
-    def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: Iterator[str] = None):
+    def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: AsyncGenerator[str, None] = None):
         # Set up state
         self._done = False
         self._prints = []
 
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
-        self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
-        self._handshake_out()
+        self._out_key = None  # Generate on first message send
 
         # Connect input
-        in_stream_text = in_stream if in_stream is not None else _input_receiver()
-        self._in_stream = MessagePrintConnection._make_messages_iterator(in_stream_text)
-        self._in_key = None
-        self._handshake_in()
+        in_stream_text: AsyncGenerator[str, None] = in_stream if in_stream is not None else _input_receiver()
+        self._in_stream = self._make_messages_iterator(in_stream_text)
 
     def get_prints(self) -> str:
         return "\n".join(self._prints)
 
-    def close(self):
-        self.send_message(Message(self._out_key, MessageType.END, {}))
+    async def close(self):
+        await self.send_message(Message(self._out_key, MessageType.END, {}))
 
-    def get_next_message_data(self):
+    async def get_next_message_data(self):
         if self._done:
             raise ConnectionNotActiveError()
 
-        for message in self._in_stream:
+        async for message in self._in_stream:
             if message.message_type == MessageType.PRINT:
                 self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
@@ -132,34 +128,28 @@ class MessagePrintConnection(Connection):
                 raise ConnectionNotActiveError()
 
         self._done = True
-        self.get_next_message_data()  # Force an except
+        return await self.get_next_message_data()  # Force an except
 
-    def send_call(self, method_name, method_args, method_kwargs):
-        self._send("call", method_name=method_name, method_args=method_args, method_kwargs=method_kwargs)
+    async def send_call(self, method_name, method_args, method_kwargs):
+        await self._send("call", method_name=method_name, method_args=method_args, method_kwargs=method_kwargs)
 
-    def send_ping(self):
-        self._send("ping")
+    async def send_ping(self):
+        await self._send("ping")
 
-    def _handshake_out(self):
-        message = Message(None, MessageType.NEW_KEY, self._out_key)
-        self.send_message(message)
+    async def send_key(self):
+        if self._out_key is None:
+            self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+            message = Message(None, MessageType.NEW_KEY, self._out_key)
+            await self.send_message(message)
 
-    def _handshake_in(self):
-        prints = []
-        for message in self._in_stream:
-            if message.message_type == MessageType.NEW_KEY:
-                self._in_stream = itertools.chain(prints, self._in_stream)
-                return
-            if message.message_type == MessageType.PRINT:
-                prints.append(message)
+    async def _make_messages_iterator(self, lines: AsyncGenerator[str, None]) -> AsyncGenerator[Message, None]:
+        # We need to send the key before we listen to avoid deadlock
+        if self._out_key is None:
+            await self.send_key()
 
-        raise HandshakeFailedError([p.data for p in prints])
-
-    @staticmethod
-    def _make_messages_iterator(lines: Iterator[str]) -> Iterator[Message]:
         key = None
 
-        for line in lines:
+        async for line in lines:
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue
@@ -205,23 +195,29 @@ class MessagePrintConnection(Connection):
 
         # If it's not a new key then it should have the current key
         if message.key is None or message.key != key:
-            raise MessageInvalidAttachedKey(key)
+            raise MessageInvalidAttachedKey(message.key)
 
         return message
 
-    def _send(self, instruction, **kwargs):
-        self.send_result({"type": instruction, **kwargs})
+    async def _send(self, instruction, **kwargs):
+        await self.send_result({"type": instruction, **kwargs})
 
-    def send_result(self, data):
+    async def send_result(self, data):
         message = Message(self._out_key, MessageType.RESULT, data)
-        self.send_message(message)
+        await self.send_message(message)
 
-    def send_message(self, message):
+    async def send_message(self, message):
         if self._done:
             raise ConnectionNotActiveError()
 
+        if self._out_key is None:
+            await self.send_key()
+
+        message.key = self._out_key
         s = json.dumps(message, cls=Encoder)
-        self._out_handler(s)
+        res = self._out_handler(s)
+        if isinstance(res, Awaitable):
+            await res
 
 
 class Encoder(json.JSONEncoder):

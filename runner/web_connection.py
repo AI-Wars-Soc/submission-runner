@@ -1,24 +1,25 @@
+import asyncio
 import json
 import threading
+from json import JSONDecodeError
 
-import socketio
 from cuwais.config import config_file
-from socketio import Namespace
 import queue
+
+from starlette.websockets import WebSocketDisconnect
 
 from runner import gamemode_runner
 from runner.gamemode_runner import Gamemode
 from runner.logger import logger
 from shared.message_connection import Encoder, Decoder
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
-
-sio = socketio.Server(async_mode='eventlet', logger=logger, always_connect=True)
+from fastapi import WebSocket
 
 
 class SocketConnection(Connection):
     def __init__(self, send_fn):
         self._send_fn = send_fn
-        self._semaphore = threading.Semaphore(value=0)
+        self._semaphore = asyncio.Semaphore(value=0)
         self._responses = queue.Queue()
         self._closed = False
 
@@ -26,11 +27,11 @@ class SocketConnection(Connection):
         self._responses.put(response)
         self._semaphore.release()
 
-    def get_next_message_data(self):
+    async def get_next_message_data(self):
         if self._closed:
             raise ConnectionNotActiveError()
 
-        acquired = self._semaphore.acquire(timeout=config_file.get("gamemode.options.player_turn_time"))
+        acquired = await self._semaphore.acquire()
 
         if not acquired:
             self.close()
@@ -72,58 +73,54 @@ class GamemodeThread(threading.Thread):
         self.send_fn({"type": "result", "result": dict(result)})
 
 
-def _make_send_fn(connection, sid):
-    def send_fn(m):
-        connection.send(json.dumps(m, cls=Encoder), room=sid)
+def _make_send_fn(websocket: WebSocket):
+    async def send_fn(m):
+        await websocket.send_text(json.dumps(m, cls=Encoder))
     return send_fn
 
 
-class WebConnection(Namespace):
-    def on_connect(self, sid, environ):
-        logger.debug(f"Connected {sid}")
+async def websocket_game(websocket: WebSocket):
+    connection = SocketConnection(_make_send_fn(websocket))
 
-        with self.session(sid) as session:
-            session["connection"] = SocketConnection(_make_send_fn(self, sid))
+    async def disconnect():
+        connection.close()
+        await websocket.close()
 
-    def on_disconnect(self, sid):
-        logger.debug(f"Disconnected {sid}")
-        with self.session(sid) as session:
-            session["connection"].close()
+    try:
+        data = await websocket.receive_json()
+    except JSONDecodeError:
+        await websocket.send_text(json.dumps({"error": "Invalid JSON data"}, cls=Encoder))
+        return
+    logger.debug(f"Start Game: {data}")
 
-    def on_start_game(self, sid, data):
-        logger.debug(f"Start Game {sid}: {data}")
+    if "submissions" not in data:
+        await disconnect()
+        return
 
-        if "submissions" not in data:
-            self.disconnect(sid)
-            return
+    if not all(isinstance(s, str) for s in data):
+        await disconnect()
+        return
 
-        if not all(isinstance(s, str) for s in data):
-            self.disconnect(sid)
-            return
+    GamemodeThread(connection, data["submissions"], _make_send_fn(websocket)).start()
 
-        with self.session(sid) as session:
-            GamemodeThread(session["connection"], data["submissions"], _make_send_fn(self, sid)).start()
-
-    def on_respond(self, sid, data):
-        logger.debug(f"Respond {sid}: {data}")
+    while True:
+        try:
+            data = await websocket.receive_text()
+        except WebSocketDisconnect:
+            break
 
         # Decode data and check validity
         try:
             data = json.loads(data, cls=Decoder)
         except json.JSONDecodeError:
-            self.disconnect(sid)
+            await disconnect()
             return
 
         if "value" not in data:
-            self.disconnect(sid)
+            await disconnect()
             return
 
         data = data["value"]
+        connection.register_response(data)
 
-        with self.session(sid) as session:
-            connection: SocketConnection
-            connection = session["connection"]
-            connection.register_response(data)
-
-
-sio.register_namespace(WebConnection('/'))
+    await disconnect()
