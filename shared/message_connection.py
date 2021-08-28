@@ -3,8 +3,7 @@ import logging
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
-import random
-from typing import Iterator, Callable, Optional, Any, AsyncGenerator, Awaitable
+from typing import Iterator, Callable, Any, AsyncGenerator, Awaitable
 
 import chess
 
@@ -14,7 +13,6 @@ from shared.exceptions import MissingFunctionError, ExceptionTraceback, Failsafe
 
 @unique
 class MessageType(Enum):
-    NEW_KEY = "NEW_KEY"
     RESULT = "RESULT"
     PRINT = "PRINT"
     END = "END"
@@ -42,21 +40,8 @@ class MessageInvalidTypeError(MessageParseError):
         super().__init__(self, "Invalid type name: " + str(self.type_name))
 
 
-class MessageInvalidNewKey(MessageParseError):
-    def __init__(self, new_key: int):
-        self.new_key = new_key
-        super().__init__(self, "Invalid new key: " + hex(self.new_key))
-
-
-class MessageInvalidAttachedKey(MessageParseError):
-    def __init__(self, key: Optional[int]):
-        self.key = key
-        super().__init__(self, "Invalid attached key: " + hex(self.key))
-
-
 class Message:
-    def __init__(self, key: Optional[int], message_type: MessageType, data):
-        self.key = key
+    def __init__(self, message_type: MessageType, data):
         self.message_type = MessageType(message_type)
         self.data = data
 
@@ -67,8 +52,8 @@ class Message:
         return "<Message type: {}; data: {:20s}>".format(str(self.message_type.value), str(self.data))
 
     @staticmethod
-    def new_result(key: int, data) -> "Message":
-        return Message(key, MessageType.RESULT, data)
+    def new_result(data) -> "Message":
+        return Message(MessageType.RESULT, data)
 
 
 _input = builtins.input
@@ -98,17 +83,16 @@ class MessagePrintConnection(Connection):
 
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
-        self._out_key = None  # Generate on first message send
 
         # Connect input
         in_stream_text: AsyncGenerator[str, None] = in_stream if in_stream is not None else _input_receiver()
-        self._in_stream = self._make_messages_iterator(in_stream_text)
+        self._in_stream = MessagePrintConnection._make_messages_iterator(in_stream_text)
 
     def get_prints(self) -> str:
         return "\n".join(self._prints)
 
     async def close(self):
-        await self.send_message(Message(self._out_key, MessageType.END, {}))
+        await self.send_message(Message(MessageType.END, {}))
 
     async def get_next_message_data(self):
         if self._done:
@@ -118,10 +102,6 @@ class MessagePrintConnection(Connection):
             if message.message_type == MessageType.PRINT:
                 self._prints.append(message.data)
             elif message.message_type == MessageType.RESULT:
-                if isinstance(message.data, FailsafeError):
-                    logging.error(str(message.data))
-                    self._done = True
-                    raise ConnectionNotActiveError()
                 return message.data
             elif message.message_type == MessageType.END:
                 self._done = True
@@ -136,29 +116,14 @@ class MessagePrintConnection(Connection):
     async def send_ping(self):
         await self._send("ping")
 
-    async def send_key(self):
-        if self._out_key is None:
-            self._out_key = random.randint(-0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
-            message = Message(None, MessageType.NEW_KEY, self._out_key)
-            await self.send_message(message)
-
-    async def _make_messages_iterator(self, lines: AsyncGenerator[str, None]) -> AsyncGenerator[Message, None]:
-        # We need to send the key before we listen to avoid deadlock
-        if self._out_key is None:
-            await self.send_key()
-
-        key = None
-
+    @staticmethod
+    async def _make_messages_iterator(lines: AsyncGenerator[str, None]) -> AsyncGenerator[Message, None]:
         async for line in lines:
             line = str(line).strip()
             if line.isspace() or line == "":
                 continue
 
-            message = MessagePrintConnection._process_line(key, line)
-
-            # Update key if message told us to
-            if message.message_type == MessageType.NEW_KEY:
-                key = message.data
+            message = MessagePrintConnection._process_line(line)
 
             if message.message_type == MessageType.END:
                 yield message
@@ -179,23 +144,13 @@ class MessagePrintConnection(Connection):
         return message
 
     @staticmethod
-    def _process_line(key: int, line: str) -> "Message":
+    def _process_line(line: str) -> "Message":
         # Check for commands
         try:
             message = MessagePrintConnection._message_from_string(line)
         except MessageParseError:
             # No match => assume print statement
-            return Message(key, MessageType.PRINT, line)
-
-        # New key is a special case
-        if message.message_type == MessageType.NEW_KEY:
-            if key is not None:
-                raise MessageInvalidNewKey(key)
-            return message
-
-        # If it's not a new key then it should have the current key
-        if message.key is None or message.key != key:
-            raise MessageInvalidAttachedKey(message.key)
+            return Message(MessageType.PRINT, line)
 
         return message
 
@@ -203,17 +158,13 @@ class MessagePrintConnection(Connection):
         await self.send_result({"type": instruction, **kwargs})
 
     async def send_result(self, data):
-        message = Message(self._out_key, MessageType.RESULT, data)
+        message = Message(MessageType.RESULT, data)
         await self.send_message(message)
 
-    async def send_message(self, message):
+    async def send_message(self, message: Message):
         if self._done:
             raise ConnectionNotActiveError()
 
-        if self._out_key is None:
-            await self.send_key()
-
-        message.key = self._out_key
         s = json.dumps(message, cls=Encoder)
         res = self._out_handler(s)
         if isinstance(res, Awaitable):
@@ -233,7 +184,6 @@ class Encoder(json.JSONEncoder):
     @staticmethod
     def _message(message: Message):
         return {'__custom_type': 'message',
-                'key': message.key,
                 'type': str(message.message_type.value),
                 'data': message.data}
 
@@ -281,7 +231,7 @@ class Decoder(json.JSONDecoder):
 
     @staticmethod
     def _message(data: dict):
-        return Message(key=data['key'], message_type=MessageType(data['type']), data=data['data'])
+        return Message(message_type=MessageType(data['type']), data=data['data'])
 
     @staticmethod
     def _missing_function_error(e: dict):

@@ -40,9 +40,13 @@ def get_info():
 async def get_instructions(connection: MessagePrintConnection):
     while True:
         try:
-            yield await connection.get_next_message_data()
+            print("Waiting for next message...")
+            m = await connection.get_next_message_data()
+            print("Got next message")
+            yield m
         except (ConnectionTimedOutError, ConnectionNotActiveError):
-            return
+            print("Got end")
+            break
 
 
 async def main():
@@ -51,7 +55,11 @@ async def main():
 
     # Check that we haven't got any security holes
     if os.getenv("DEBUG").lower().startswith("t"):
-        pass  # failsafes()
+        try:
+            pass  # failsafes()
+        except FailsafeError:
+            await connection.complete()
+            return
 
     # Reduce things that can accidentally go wrong
     def fake_input(*args, **kwargs):
