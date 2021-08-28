@@ -58,7 +58,6 @@ async def main():
         try:
             pass  # failsafes()
         except FailsafeError:
-            await connection.complete()
             return
 
     # Reduce things that can accidentally go wrong
@@ -95,7 +94,7 @@ async def main():
             await connection.send_result(ExceptionTraceback(tb))
             break
 
-    await connection.complete()
+    print("Finished")
 
 
 if __name__ == "__main__":

@@ -13,8 +13,9 @@ class Connection:
     async def get_next_message_data(self):
         """Tries to get a data message from the connection. Raises ConnectionNotActiveError if the container
         is no longer active, or raises ConnectionTimedOutError if the container times out while we are reading.
-        While these evens are similar, ConnectionNotActiveError is due to the process dying on the VM side
-        and ConnectionTimedOutError is due to the process dying on the host side"""
+        While these evens are similar, ConnectionNotActiveError is due to the connection closing pre-emptively
+        and ConnectionTimedOutError is due to the connection overrunning.
+        These exceptions should continue to be thrown if iterating further."""
         pass
 
     @abc.abstractmethod
@@ -72,4 +73,4 @@ class ConnectionNotActiveError(RuntimeError):
 
 class ConnectionTimedOutError(RuntimeError):
     def __init__(self):
-        super().__init__()
+        super(ConnectionTimedOutError, self).__init__()

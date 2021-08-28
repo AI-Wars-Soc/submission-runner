@@ -1,11 +1,10 @@
 import json
 import logging
-from typing import List
 
 from cuwais.gamemodes import Gamemode
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi_utils.timing import add_timing_middleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from runner import gamemode_runner
 from runner.web_connection import websocket_game
@@ -18,7 +17,7 @@ if DEBUG and PROFILE:
     add_timing_middleware(app, record=logging.info, prefix="app", exclude="untimed")
 
 
-@app.get('/run', response_class=JSONResponse)
+@app.get('/run')
 async def run_endpoint(submissions: str, options: str = None, gamemode: str = "chess", moves: int = 2 << 32):
     try:
         submissions = json.loads(submissions)
@@ -42,7 +41,7 @@ async def run_endpoint(submissions: str, options: str = None, gamemode: str = "c
 
     parsed = await gamemode_runner.run(gamemode, submissions, options, moves)
 
-    return json.dumps(parsed, cls=Encoder)
+    return Response(content=json.dumps(parsed, cls=Encoder), media_type="application/json")
 
 
 @app.websocket("/ws/run")

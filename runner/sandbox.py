@@ -7,11 +7,11 @@ from typing import AsyncGenerator
 
 import aiodocker
 from aiodocker.stream import Stream
-from aiofile import async_open
 from cuwais.config import config_file
 
 from runner.config import DEBUG
 from runner.logger import logger
+from shared.connection import Connection
 from shared.message_connection import MessagePrintConnection
 
 DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
@@ -46,7 +46,6 @@ def _get_env_vars() -> dict:
 async def _make_sandbox_container(client: aiodocker.docker.Docker, env_vars: dict) -> aiodocker.docker.DockerContainer:
     mem_limit = _to_bytes(config_file.get("submission_runner.sandbox_memory_limit"))
     max_repo_size_bytes = int(config_file.get("max_repo_size_bytes"))
-    # unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
     cpu_quota = int(100000 * float(config_file.get("submission_runner.sandbox_cpu_count")))
 
     tmpfs_flags = "rw,noexec,nosuid,noatime"  # See mount command
@@ -65,7 +64,7 @@ async def _make_sandbox_container(client: aiodocker.docker.Docker, env_vars: dic
                 "AUDIT_WRITE",
                 "CHOWN",
                 "DAC_OVERRIDE",
-                "FOWNER",
+                # "FOWNER",  # Allows chmod
                 "FSETID",
                 "KILL",
                 "MKNOD",
@@ -101,25 +100,39 @@ async def _make_sandbox_container(client: aiodocker.docker.Docker, env_vars: dic
     return container
 
 
-async def _compress_sandbox_files(fh):
+def _compress_sandbox_files(fh):
     with tarfile.open(fileobj=fh, mode='w') as tar:
         tar.add("./sandbox", arcname="sandbox")
         tar.add("./shared", arcname="shared")
 
 
 async def _exec_root(container: aiodocker.docker.DockerContainer, command: str):
-    exec_ctxt = await container.exec(command, user='root', tty=True)
-    res = await exec_ctxt.start(detach=True, timeout=30)
-    logger.debug(f"Container {container.id}: result of command {command}: {res.decode()}")
+    logger.debug(f"Container {container.id}: running {command}")
+    exec_ctxt = await container.exec(command, user='root', tty=True, stdout=True)
+    exec_stream: Stream = exec_ctxt.start(timeout=30)
+    output = b''
+    while True:
+        message: aiodocker.stream.Message = await exec_stream.read_out()
+        if message is None:
+            break
+        output += message.data
+    logger.debug(f"Container {container.id}: result of command {command}: '{output.decode()}'")
+
+
+_sandbox_scripts = io.BytesIO()
+_sandbox_scripts_added = False
 
 
 async def _copy_sandbox_scripts(container: aiodocker.docker.DockerContainer):
-    with io.BytesIO() as fh:
+    global _sandbox_scripts
+    global _sandbox_scripts_added
+    if not _sandbox_scripts_added:
         # Compress files to tar
-        await _compress_sandbox_files(fh)
+        _compress_sandbox_files(_sandbox_scripts)
+        _sandbox_scripts_added = True
 
-        # Send
-        await container.put_archive("/home/sandbox/", fh.getvalue())
+    # Send
+    await container.put_archive("/home/sandbox/", _sandbox_scripts.getvalue())
 
 
 async def _copy_submission(container: aiodocker.docker.DockerContainer, submission_hash: str):
@@ -136,10 +149,13 @@ async def _copy_submission(container: aiodocker.docker.DockerContainer, submissi
     init_path = os.path.join(dest_path, "__init__.py")
     await _exec_root(container, f"touch {init_path}")
 
+    logger.debug(f"Container {container.id}: opening submission {submission_hash}")
+    with open(submission_path, 'rb') as f:
+        logger.debug(f"Container {container.id}: reading submission {submission_hash}")
+        data = f.read()
+
     logger.debug(f"Container {container.id}: putting submission {submission_hash}")
-    async with async_open(submission_path, 'rb') as f:
-        data = await f.read()
-        await container.put_archive(dest_path, data)
+    await container.put_archive(dest_path, data)
 
 
 async def _lock_down(container: aiodocker.docker.DockerContainer):
@@ -178,7 +194,7 @@ def _is_submission_valid(submission_hash: str, submission_path: str):
 
 
 @asynccontextmanager
-async def run(timeout: int, submission_hash: str):
+async def run(submission_hash: str) -> Connection:
     docker = None
     container = None
 
@@ -190,7 +206,6 @@ async def run(timeout: int, submission_hash: str):
         logger.debug(f"Creating container for hash {submission_hash}")
         env_vars = _get_env_vars()
         container = await _make_sandbox_container(docker, env_vars)
-        logger.debug(f"Container {container.id} logs: {''.join(await container.log(stdout=True))}")
 
         # Copy information
         logger.debug(f"Container {container.id}: copying scripts")
@@ -200,9 +215,6 @@ async def run(timeout: int, submission_hash: str):
         logger.debug(f"Container {container.id}: locking down")
         await _lock_down(container)
 
-        await _exec_root(container, "echo 'hello!'")
-        await _exec_root(container, "free -m")
-
         # Start script
         logger.debug(f"Container {container.id}: running script")
         run_t = int(config_file.get('submission_runner.sandbox_run_timeout_seconds'))
@@ -210,14 +222,17 @@ async def run(timeout: int, submission_hash: str):
         cmd_exec = await container.exec(cmd=run_script_cmd,
                                         user='read_only_user',
                                         stdin=True,
+                                        stdout=True,
+                                        stderr=True,
                                         tty=False,
                                         environment=env_vars,
                                         workdir="/home/sandbox/")
-        cmd_stream: Stream = cmd_exec.start(timeout=timeout)
+        unrun_t = int(config_file.get('submission_runner.sandbox_unrun_timeout_seconds'))
+        cmd_stream: Stream = cmd_exec.start(timeout=unrun_t)
 
         # Set up input to the container
         async def send_handler(m: str):
-            logger.debug(f"Container {container.id} <-- '{m}'")
+            logger.debug(f"Container {container.id} <-- '{m.encode()}'")
             await cmd_stream.write_in((m + "\n").encode())
 
         # Set up output from the container
@@ -234,7 +249,7 @@ async def run(timeout: int, submission_hash: str):
         lines = _get_lines(receive_handler())
 
         logger.debug(f"Container {container.id}: connecting")
-        yield MessagePrintConnection(send_handler, lines)
+        yield MessagePrintConnection(send_handler, lines, container.id)
 
     finally:
         # Clean everything up

@@ -1,5 +1,4 @@
 import builtins
-import logging
 from enum import Enum, unique
 import json
 from json import JSONDecodeError
@@ -76,10 +75,12 @@ class HandshakeFailedError(RuntimeError):
 class MessagePrintConnection(Connection):
     _in_stream: AsyncGenerator[Message, None]
 
-    def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: AsyncGenerator[str, None] = None):
+    def __init__(self, out_handler: Callable[[str], Any] = None, in_stream: AsyncGenerator[str, None] = None,
+                 name: str = ""):
         # Set up state
         self._done = False
         self._prints = []
+        self._name = name
 
         # Set up output
         self._out_handler = out_handler if out_handler is not None else lambda x: print(x, flush=True)
@@ -169,6 +170,9 @@ class MessagePrintConnection(Connection):
         res = self._out_handler(s)
         if isinstance(res, Awaitable):
             await res
+
+    def __str__(self):
+        return f"MessagePrintConnection<{self._name}>"
 
 
 class Encoder(json.JSONEncoder):

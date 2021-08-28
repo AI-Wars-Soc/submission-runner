@@ -1,3 +1,4 @@
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import List, Tuple
@@ -9,15 +10,16 @@ from runner.logger import logger
 from runner.middleware import Middleware
 from runner.results import ParsedResult, SingleResult
 from runner import sandbox
+from runner.timed_connection import TimedConnection
 from shared.exceptions import MissingFunctionError, ExceptionTraceback
 from shared.message_connection import HandshakeFailedError
 from shared.connection import Connection, ConnectionNotActiveError, ConnectionTimedOutError
 
 
 @asynccontextmanager
-async def make_container_socket(gamemode: Gamemode, timeout: int, submission_hash):
+async def _make_container_connection(gamemode: Gamemode, submission_hash):
     try:
-        async with sandbox.run(timeout, submission_hash) as new_connection:
+        async with sandbox.run(submission_hash) as new_connection:
             await new_connection.ping()
             yield new_connection
     except HandshakeFailedError as e:
@@ -27,6 +29,35 @@ async def make_container_socket(gamemode: Gamemode, timeout: int, submission_has
 
         logger.error(f"Failed to handshake with container! {e.prints}")
         yield ParsedResult("", [], each_res)
+
+
+@asynccontextmanager
+async def with_multiple(*args) -> list:
+    """
+    Runs the equivalent of many 'async with' statements concurrently.
+    That is, the following code snippets are the same:
+
+    async with with_multiple(a(), b(), c()) as a, b, c:
+        foo(a, b, c)
+
+    async with a() as a:
+        async with b() as b:
+            async with c() as c:
+                foo(a, b, c)
+    """
+    async def _aenter(mgr):
+        aenter = type(mgr).__aenter__
+        return await aenter(mgr)
+
+    async def _aexit(mgr):
+        aexit = type(mgr).__aexit__
+        return await aexit(mgr, None, None, None)
+
+    enter_coroutines = [_aenter(mgr) for mgr in args]
+    res = await asyncio.gather(*enter_coroutines, return_exceptions=True)
+    yield res
+    exit_coroutines = [_aexit(mgr) for mgr in args]
+    await asyncio.gather(*exit_coroutines, return_exceptions=True)
 
 
 async def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 << 32, connections=None) -> ParsedResult:
@@ -47,15 +78,20 @@ async def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 
     if len(connections) + len(submission_hashes) != gamemode.player_count:
         raise RuntimeError("Invalid number of players total")
 
-    # Create containers recursively
-    timeout = (gamemode.player_count + 1) * int(options.get("turn_time", 10))
+    # Create containers and recurse
     if len(submission_hashes) != 0:
-        async with make_container_socket(gamemode, timeout, submission_hashes[0]) as new_connection:
-            if isinstance(new_connection, ParsedResult):
-                return new_connection
+        socket_awaitables = [_make_container_connection(gamemode, sub_hash) for sub_hash in submission_hashes]
+        async with with_multiple(*socket_awaitables) as new_connections:
+            for connection in new_connections:
+                if isinstance(connection, ParsedResult):
+                    return connection
 
-            connections.append(new_connection)
-            return await run(gamemode, submission_hashes[1:], options, turns, connections)
+                connections.append(connection)
+            return await run(gamemode, [], options, turns, connections)
+
+    # Wrap all containers in timeouts
+    timeout = (gamemode.player_count + 1) * int(options.get("turn_time", 10))
+    connections = [TimedConnection(connection, timeout) for connection in connections]
 
     # Set up linking through middleware
     logger.debug("Attaching middleware: ")
@@ -77,7 +113,7 @@ async def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 
 
     parsed_result = ParsedResult(initial_board, moves, results)
 
-    logger.debug(f"Done running gamemode {gamemode.name}!")
+    logger.debug(f"Done running gamemode {gamemode.name}! Result: {parsed_result}")
     return parsed_result
 
 
