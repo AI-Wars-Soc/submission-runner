@@ -2,10 +2,12 @@
 # Ubuntu
 FROM ubuntu:20.04
 
-# Install from apt-get
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/London \
-	PATH="/home/subrunner/.local/bin:${PATH}"
+	PATH="/home/subrunner/.local/bin:${PATH}" \
+	PYTHONPATH="/home/subrunner:/home/subrunner/runner:${PYTHONPATH}"
+
+# Install from apt-get
 RUN apt-get update \
 && apt-get install -y python3 python3-pip bash git libpq-dev apt-utils \
 && ln -sf python3 /usr/bin/python
@@ -30,7 +32,7 @@ COPY runner /home/subrunner/runner
 COPY sandbox /home/subrunner/sandbox
 COPY shared /home/subrunner/shared
 ADD --chown=subrunner https://raw.githubusercontent.com/AI-Wars-Soc/common/main/default_config.yml /home/subrunner/default_config.yml
-ENV PYTHONPATH="/home/subrunner:/home/subrunner/runner:${PYTHONPATH}"
+ENV
 
 # Set up repositories
 USER subrunner
