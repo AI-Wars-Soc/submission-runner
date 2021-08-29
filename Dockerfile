@@ -32,7 +32,6 @@ COPY runner /home/subrunner/runner
 COPY sandbox /home/subrunner/sandbox
 COPY shared /home/subrunner/shared
 ADD --chown=subrunner https://raw.githubusercontent.com/AI-Wars-Soc/common/main/default_config.yml /home/subrunner/default_config.yml
-ENV
 
 # Set up repositories
 USER subrunner
