@@ -1,7 +1,7 @@
 import asyncio
 import json
-import threading
 from json import JSONDecodeError
+from typing import Callable, Awaitable
 
 from cuwais.config import config_file
 import queue
@@ -17,7 +17,7 @@ from fastapi import WebSocket
 
 
 class SocketConnection(Connection):
-    def __init__(self, send_fn):
+    def __init__(self, send_fn: Callable[[dict], Awaitable]):
         self._send_fn = send_fn
         self._semaphore = asyncio.Semaphore(value=0)
         self._responses = queue.Queue()
@@ -34,7 +34,7 @@ class SocketConnection(Connection):
         acquired = await self._semaphore.acquire()
 
         if not acquired:
-            self.close()
+            await self.close()
             raise ConnectionTimedOutError()
 
         if self._closed:
@@ -43,34 +43,18 @@ class SocketConnection(Connection):
 
         return self._responses.get()
 
-    def close(self):
+    async def close(self):
         self._closed = True
         self._semaphore.release()
 
-    def send_call(self, method_name, method_args, method_kwargs):
-        self._send_fn({"type": "call", "name": method_name, "args": method_args, "kwargs": method_kwargs})
+    async def send_call(self, method_name, method_args, method_kwargs):
+        await self._send_fn({"type": "call", "name": method_name, "args": method_args, "kwargs": method_kwargs})
 
-    def send_ping(self):
-        self._send_fn({"type": "ping"})
+    async def send_ping(self):
+        await self._send_fn({"type": "ping"})
 
     def get_prints(self) -> str:
         return ""
-
-
-class GamemodeThread(threading.Thread):
-    def __init__(self, connection, submissions, send_fn):
-        super().__init__()
-        self.daemon = True
-        self.connection = connection
-        self.submissions = submissions
-        self.send_fn = send_fn
-
-    def run(self):
-        gamemode, options = Gamemode.get_from_config()
-        options["turn_time"] = config_file.get("gamemode.options.player_turn_time")
-        result = gamemode_runner.run(gamemode, self.submissions, options, connections=[self.connection])
-
-        self.send_fn({"type": "result", "result": dict(result)})
 
 
 def _make_send_fn(websocket: WebSocket):
@@ -79,30 +63,15 @@ def _make_send_fn(websocket: WebSocket):
     return send_fn
 
 
-async def websocket_game(websocket: WebSocket):
-    connection = SocketConnection(_make_send_fn(websocket))
+async def _run_game_coroutine(submissions, connection, send_fn):
+    gamemode, options = Gamemode.get_from_config()
+    options["turn_time"] = config_file.get("gamemode.options.player_turn_time")
+    result = await gamemode_runner.run(gamemode, submissions, options, connections=[connection])
 
-    async def disconnect():
-        connection.close()
-        await websocket.close()
+    send_fn({"type": "result", "result": dict(result)})
 
-    try:
-        data = await websocket.receive_json()
-    except JSONDecodeError:
-        await websocket.send_text(json.dumps({"error": "Invalid JSON data"}, cls=Encoder))
-        return
-    logger.debug(f"Start Game: {data}")
 
-    if "submissions" not in data:
-        await disconnect()
-        return
-
-    if not all(isinstance(s, str) for s in data):
-        await disconnect()
-        return
-
-    GamemodeThread(connection, data["submissions"], _make_send_fn(websocket)).start()
-
+async def _websocket_connection_coroutine(websocket, connection, disconnect):
     while True:
         try:
             data = await websocket.receive_text()
@@ -123,4 +92,33 @@ async def websocket_game(websocket: WebSocket):
         data = data["value"]
         connection.register_response(data)
 
-    await disconnect()
+
+async def websocket_game(websocket: WebSocket):
+    await websocket.accept()
+    connection = SocketConnection(_make_send_fn(websocket))
+
+    async def disconnect():
+        await connection.close()
+        await websocket.close()
+
+    try:
+        try:
+            data = await websocket.receive_json()
+        except JSONDecodeError:
+            await websocket.send_text(json.dumps({"error": "Invalid JSON data"}, cls=Encoder))
+            return
+        logger.debug(f"Start Game: {data}")
+
+        if "submissions" not in data:
+            await disconnect()
+            return
+
+        if not all(isinstance(s, str) for s in data):
+            await disconnect()
+            return
+
+        game_task = asyncio.create_task(_run_game_coroutine(data["submissions"], connection, _make_send_fn(websocket)))
+        connection_task = asyncio.create_task(_websocket_connection_coroutine(websocket, connection, disconnect))
+        await asyncio.gather(game_task, connection_task)
+    finally:
+        await disconnect()

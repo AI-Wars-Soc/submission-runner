@@ -2,6 +2,7 @@ import asyncio
 import time
 from asyncio import wait_for
 from contextlib import asynccontextmanager
+from typing import Coroutine
 
 from runner.logger import logger
 from shared.connection import Connection, ConnectionTimedOutError
@@ -17,10 +18,10 @@ class TimedConnection(Connection):
         self._time_remaining = timeout
 
     @asynccontextmanager
-    async def _timed(self, task):
+    async def _timed(self, task: Coroutine):
         start = time.time()
         try:
-            logger.debug(f"Connection {self._connection}: Time remaining: {self._time_remaining}")
+            logger.debug(f"Connection {self._connection}: Time remaining: {self._time_remaining}, running {task}")
             yield await wait_for(task, self._time_remaining)
         except asyncio.TimeoutError:
             logger.debug(f"Connection {self._connection}: Timeout")
@@ -47,4 +48,3 @@ class TimedConnection(Connection):
     async def send_ping(self):
         async with self._timed(self._connection.send_ping()) as res:
             return res
-
