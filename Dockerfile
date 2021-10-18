@@ -23,7 +23,7 @@ RUN useradd subrunner -m -G docker
 USER subrunner
 RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt ./
-RUN python3 -m pip install --no-cache-dir -r requirements.txt=
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Add scripts
 VOLUME ["/tmp/sandbox"]
