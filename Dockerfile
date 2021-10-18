@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Install from apt-get
 RUN apt-get update \
-&& apt-get install -y python3 python3-pip bash git libpq-dev apt-utils \
+&& apt-get install -y python3.8 python3-pip bash git libpq-dev apt-utils \
 && ln -sf python3 /usr/bin/python
 
 # Install docker
@@ -23,18 +23,16 @@ RUN useradd subrunner -m -G docker
 USER subrunner
 RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt ./
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
-USER root
+RUN python3 -m pip install --no-cache-dir -r requirements.txt=
 
 # Add scripts
 VOLUME ["/tmp/sandbox"]
-COPY runner /home/subrunner/runner
-COPY sandbox /home/subrunner/sandbox
-COPY shared /home/subrunner/shared
+COPY --chown=subrunner runner /home/subrunner/runner
+COPY --chown=subrunner sandbox /home/subrunner/sandbox
+COPY --chown=subrunner shared /home/subrunner/shared
 ADD --chown=subrunner https://raw.githubusercontent.com/AI-Wars-Soc/common/main/default_config.yml /home/subrunner/default_config.yml
 
 # Set up repositories
-USER subrunner
 RUN mkdir /home/subrunner/repositories
 VOLUME /home/subrunner/repositories
 

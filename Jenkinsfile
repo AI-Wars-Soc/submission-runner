@@ -6,7 +6,7 @@ pipeline {
   stages {
     stage('Build') {
       steps {
-        sh 'docker build -t aiwarssoc/submission-runner:latest .'
+        sh 'docker build --pull --no-cache -t aiwarssoc/submission-runner:latest .'
       }
     }
 
