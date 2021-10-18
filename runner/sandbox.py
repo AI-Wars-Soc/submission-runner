@@ -119,19 +119,13 @@ async def _exec_root(container: aiodocker.docker.DockerContainer, command: str):
     logger.debug(f"Container {container.id}: result of command {command}: '{output.decode()}'")
 
 
-_sandbox_scripts = io.BytesIO()
-_sandbox_scripts_added = False
-
-
 async def _copy_sandbox_scripts(container: aiodocker.docker.DockerContainer):
-    global _sandbox_scripts
-    global _sandbox_scripts_added
-    if not _sandbox_scripts_added:
-        # Compress files to tar
-        _compress_sandbox_files(_sandbox_scripts)
-        _sandbox_scripts_added = True
+    _sandbox_scripts = io.BytesIO()
+    # Compress files to tar
+    _compress_sandbox_files(_sandbox_scripts)
 
     # Send
+    _sandbox_scripts.seek(0)
     await container.put_archive("/home/sandbox/", _sandbox_scripts.getvalue())
 
 
