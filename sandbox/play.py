@@ -40,12 +40,9 @@ def get_info():
 async def get_instructions(connection: MessagePrintConnection):
     while True:
         try:
-            print("Waiting for next message...")
             m = await connection.get_next_message_data()
-            print("Got next message")
             yield m
         except (ConnectionTimedOutError, ConnectionNotActiveError):
-            print("Got end")
             break
 
 
@@ -93,8 +90,6 @@ async def main():
 
             await connection.send_result(ExceptionTraceback(tb))
             break
-
-    print("Finished")
 
 
 if __name__ == "__main__":
