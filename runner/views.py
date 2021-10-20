@@ -1,12 +1,14 @@
 import json
 import logging
+import traceback
 
 from cuwais.gamemodes import Gamemode
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi_utils.timing import add_timing_middleware
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from runner import gamemode_runner
+from runner.logger import logger
 from runner.web_connection import websocket_game
 from shared.message_connection import Encoder
 
@@ -39,11 +41,19 @@ async def run_endpoint(submissions: str, options: str = None, gamemode: str = "c
     if options is None:
         options = {}
 
-    parsed = await gamemode_runner.run(gamemode, submissions, options, moves)
+    try:
+        parsed = await gamemode_runner.run(gamemode, submissions, options, moves)
+    except:
+        logger.error(traceback.format_exc())
+        raise
 
     return Response(content=json.dumps(parsed, cls=Encoder), media_type="application/json")
 
 
 @app.websocket("/ws/run")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket_game(websocket)
+    try:
+        await websocket_game(websocket)
+    except:
+        logger.error(traceback.format_exc())
+        raise

@@ -201,7 +201,11 @@ async def run(submission_hash: str) -> AsyncIterator[Connection]:
         # Create container
         logger.debug(f"Creating container for hash {submission_hash}")
         env_vars = _get_env_vars()
-        container = await _make_sandbox_container(docker, env_vars)
+        try:
+            container = await _make_sandbox_container(docker, env_vars)
+        except DockerError:
+            logger.error(traceback.format_exc())
+            raise
 
         # Copy information
         logger.debug(f"Container {container.id}: copying scripts")
