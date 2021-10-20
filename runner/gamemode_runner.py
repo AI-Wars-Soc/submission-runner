@@ -1,7 +1,7 @@
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from typing import List, Tuple
+from typing import List, Tuple, AsyncIterator, Union
 
 from cuwais.common import Outcome, Result
 from cuwais.gamemodes import Gamemode
@@ -17,9 +17,11 @@ from shared.connection import Connection, ConnectionNotActiveError, ConnectionTi
 
 
 @asynccontextmanager
-async def _make_container_connection(gamemode: Gamemode, submission_hash):
+async def _make_container_connection(gamemode: Gamemode,
+                                     submission_hash: str) -> AsyncIterator[Union[Connection, ParsedResult]]:
     try:
         async with sandbox.run(submission_hash) as new_connection:
+            new_connection: Connection
             await new_connection.ping()
             yield new_connection
     except HandshakeFailedError as e:
@@ -85,6 +87,9 @@ async def run(gamemode: Gamemode, submission_hashes=None, options=None, turns=2 
             for connection in new_connections:
                 if isinstance(connection, ParsedResult):
                     return connection
+
+                if not isinstance(connection, Connection):
+                    raise RuntimeError(f"Unknown connection type: {connection}")
 
                 connections.append(connection)
             return await run(gamemode, [], options, turns, connections)

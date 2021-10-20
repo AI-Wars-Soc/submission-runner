@@ -2,10 +2,12 @@ import io
 import os
 import re
 import tarfile
+import traceback
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, AsyncIterator
 
 import aiodocker
+from aiodocker import DockerError
 from aiodocker.stream import Stream
 from cuwais.config import config_file
 
@@ -188,7 +190,7 @@ def _is_submission_valid(submission_hash: str, submission_path: str):
 
 
 @asynccontextmanager
-async def run(submission_hash: str) -> Connection:
+async def run(submission_hash: str) -> AsyncIterator[Connection]:
     docker = None
     container = None
 
