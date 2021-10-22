@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, AsyncIterator
 
 import aiodocker
-from aiodocker.images import DockerImages
 from aiodocker import DockerError
 from aiodocker.stream import Stream
 from cuwais.config import config_file
@@ -17,9 +16,7 @@ from runner.logger import logger
 from shared.connection import Connection
 from shared.message_connection import MessagePrintConnection
 
-DOCKER_IMAGE_NAME = "aiwarssoc/sandbox"
-
-await DockerImages(aiodocker.Docker()).pull(DOCKER_IMAGE_NAME)
+DOCKER_IMAGE_NAME = "aiwarssoc/sandbox:latest"
 
 
 class InvalidEntryFile(RuntimeError):
